@@ -1,0 +1,74 @@
+name: Desktop UI tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  flaui:
+    name: FlaUI / NUnit
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Run FlaUI Notepad test
+        shell: pwsh
+        run: >-
+          dotnet test flaui/Notepad.Tests/Notepad.Tests.csproj
+          --configuration Release
+          --logger "trx;LogFileName=flaui.trx"
+          --results-directory flaui/TestResults
+
+      - name: Upload FlaUI test result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flaui-test-result
+          path: flaui/TestResults
+          if-no-files-found: ignore
+
+  pywinauto:
+    name: pywinauto / pytest
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pywinauto/requirements.txt
+
+      - name: Install dependencies
+        shell: pwsh
+        run: python -m pip install -r pywinauto/requirements.txt
+
+      - name: Run pywinauto Notepad test
+        shell: pwsh
+        run: python -m pytest pywinauto/tests -vv --junitxml=pywinauto-pytest.xml
+
+      - name: Upload pywinauto test result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pywinauto-test-result
+          path: pywinauto-pytest.xml
+          if-no-files-found: ignore
