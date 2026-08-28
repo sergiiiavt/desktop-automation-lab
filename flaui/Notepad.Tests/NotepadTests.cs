@@ -52,7 +52,7 @@ public class NotepadTests
         editor.Focus();
         editor.Text = expected;
 
-        Wait.UntilInputIsProcessed(TimeSpan.FromMilliseconds(300));
+        Thread.Sleep(300);
 
         Assert.That(editor.Text, Does.Contain(expected));
     }
