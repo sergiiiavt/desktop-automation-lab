@@ -31,7 +31,7 @@ desktop-automation-lab/
 │   └── Notepad.Tests/
 │       ├── Notepad.Tests.csproj
 │       └── NotepadTests.cs
-├── pywinauto/
+├── python/
 │   ├── inspect_notepad.py
 │   ├── requirements.txt
 │   └── tests/
@@ -40,6 +40,8 @@ desktop-automation-lab/
     └── workflows/
         └── desktop-ui-tests.yml
 ```
+
+The Python folder is intentionally named `python`, not `pywinauto`: a repository directory called `pywinauto` would shadow the installed Python package during imports.
 
 ## Run FlaUI locally
 
@@ -70,14 +72,14 @@ Requirements:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r pywinauto/requirements.txt
-python -m pytest pywinauto/tests -vv
+python -m pip install -r python/requirements.txt
+python -m pytest python/tests -vv
 ```
 
 To print Notepad's UI Automation tree:
 
 ```powershell
-python pywinauto/inspect_notepad.py
+python python/inspect_notepad.py
 ```
 
 Core locator logic:
