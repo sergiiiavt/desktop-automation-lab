@@ -130,9 +130,31 @@ jobs:
 
           New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
           New-Item -ItemType File -Force -Path $knownHosts | Out-Null
-          Set-Content -Path $keyPath -Value $env:HETZNER_SSH_KEY -NoNewline
+
+          # Normalize a multiline GitHub secret for Windows OpenSSH.
+          # This also supports a secret accidentally pasted with literal \n sequences.
+          $keyText = $env:HETZNER_SSH_KEY.Trim()
+          $keyText = $keyText.Replace('\n', "`n").Replace("`r", "")
+
+          if (-not $keyText.StartsWith("-----BEGIN OPENSSH PRIVATE KEY-----")) {
+            throw "HETZNER_SSH_KEY does not start with an OpenSSH private-key header."
+          }
+          if (-not $keyText.EndsWith("-----END OPENSSH PRIVATE KEY-----")) {
+            throw "HETZNER_SSH_KEY does not end with an OpenSSH private-key footer."
+          }
+
+          [System.IO.File]::WriteAllText(
+            $keyPath,
+            $keyText + "`n",
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
           icacls $keyPath /inheritance:r | Out-Null
           icacls $keyPath /grant:r "$($env:USERNAME):(R)" | Out-Null
+
+          # Validate the private key before attempting network operations.
+          & ssh-keygen -y -f $keyPath | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "HETZNER_SSH_KEY is not a valid readable OpenSSH private key." }
 
           tar -czf allure-report.tgz -C allure-report .
           if ($LASTEXITCODE -ne 0) { throw "Failed to create Allure archive." }
