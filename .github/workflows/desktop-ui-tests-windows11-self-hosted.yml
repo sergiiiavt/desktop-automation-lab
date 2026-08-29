@@ -127,6 +127,7 @@ jobs:
           $sshDir = Join-Path $HOME ".ssh"
           $keyPath = Join-Path $sshDir "desktop-automation-hetzner"
           $knownHosts = Join-Path $sshDir "known_hosts"
+          $remoteScriptPath = Join-Path $env:RUNNER_TEMP "desktop-automation-allure-setup.sh"
 
           New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
           New-Item -ItemType File -Force -Path $knownHosts | Out-Null
@@ -210,15 +211,26 @@ jobs:
           sleep 1
           systemctl is-active --quiet desktop-automation-allure.service
           curl --fail --silent --show-error http://127.0.0.1:8089/ >/dev/null
-          systemctl --no-pager --full status desktop-automation-allure.service | head -n 20
+          systemctl --no-pager --full status desktop-automation-allure.service || true
           '@
 
-          # PowerShell here-strings use Windows CRLF; bash on Linux requires LF.
+          # Never pipe a here-string directly from PowerShell to bash: the
+          # PowerShell pipeline can reintroduce CRLF. Write a real LF-only
+          # script, upload it, then execute that file on Linux.
           $remoteSetupLf = $remoteSetup.Replace("`r", "")
-          $remoteSetupLf | & ssh -p $sshPort @sshOptions "$sshUser@$hostName" "bash -s"
+          [System.IO.File]::WriteAllText(
+            $remoteScriptPath,
+            $remoteSetupLf + "`n",
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+          & scp -P $sshPort @sshOptions $remoteScriptPath "$sshUser@$hostName`:/tmp/desktop-automation-allure-setup.sh"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to upload Hetzner setup script." }
+
+          & ssh -p $sshPort @sshOptions "$sshUser@$hostName" "bash /tmp/desktop-automation-allure-setup.sh && rm -f /tmp/desktop-automation-allure-setup.sh"
           if ($LASTEXITCODE -ne 0) { throw "Hetzner remote setup failed." }
 
-          Remove-Item $keyPath, allure-report.tgz -Force -ErrorAction SilentlyContinue
+          Remove-Item $keyPath, $remoteScriptPath, allure-report.tgz -Force -ErrorAction SilentlyContinue
           Write-Host "Allure report published to http://$hostName`:$webPort"
 
       - name: Upload report and screenshots
