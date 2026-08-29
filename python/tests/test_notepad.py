@@ -1,3 +1,4 @@
+import os
 import subprocess
 import tempfile
 import time
@@ -69,9 +70,6 @@ def activate_file_tab(window, file_name: str, timeout: float) -> None:
         root = window.wrapper_object()
         last_tabs = []
 
-        # pywinauto's UIA TabControlWrapper exposes select(item) and
-        # get_selected_tab(). This is more deterministic than click_input() on a
-        # TabItem when modern Notepad keeps multiple tab contents in the UIA tree.
         for tab_control in root.descendants(control_type="Tab"):
             try:
                 texts = tab_control.texts()
@@ -98,7 +96,6 @@ def activate_file_tab(window, file_name: str, timeout: float) -> None:
             except Exception:
                 continue
 
-        # Fallback for builds where the tab strip is not exposed as a Tab control.
         for tab in root.descendants(control_type="TabItem"):
             try:
                 title = tab.window_text()
@@ -107,17 +104,14 @@ def activate_file_tab(window, file_name: str, timeout: float) -> None:
                     tab.click_input()
                     time.sleep(0.25)
 
-                    # Verify selection if SelectionItem is exposed.
                     try:
                         if tab.iface_selection_item.CurrentIsSelected:
                             return
                     except Exception:
-                        # Some Notepad builds don't expose SelectionItem here.
                         return
             except Exception:
                 continue
 
-        # Classic Notepad has no tab strip.
         try:
             window_title = root.window_text().lower()
             if any(expected in window_title for expected in expected_names):
@@ -153,8 +147,6 @@ def find_editor(window):
                 continue
 
         if candidates:
-            # If Notepad exposes more than one editor, the selected tab's editor is
-            # the one occupying the largest visible content rectangle.
             return max(
                 candidates,
                 key=lambda item: item.rectangle().width() * item.rectangle().height(),
@@ -167,13 +159,7 @@ def find_editor(window):
 
 
 def set_text(editor, text: str) -> None:
-    """Enter text through real keyboard input so Notepad marks the file as dirty.
-
-    ValuePattern.SetValue can update the UIA text value without triggering the same
-    application edit/dirty-state path as user input on modern Windows 11 Notepad.
-    That makes Ctrl+S a no-op even though the text is visibly present. For this E2E
-    test we intentionally use keyboard input instead.
-    """
+    """Enter text through real keyboard input so Notepad marks the file as dirty."""
     editor.set_focus()
     editor.type_keys("^a{BACKSPACE}")
     editor.type_keys(text, with_spaces=True, pause=0.02)
@@ -211,20 +197,45 @@ def close_test_tab(window, file_name: str) -> None:
     time.sleep(0.25)
 
 
-def test_can_type_read_and_save_text(notepad):
+def capture_window(window, test_name: str, step: str) -> Path | None:
+    """Capture only the Notepad window for the portable HTML/artifact report."""
+    try:
+        artifacts_root = Path(
+            os.environ.get("DESKTOP_TEST_ARTIFACTS_DIR", "python/TestArtifacts")
+        ).resolve()
+        safe_test_name = "".join(
+            char if char.isalnum() or char in "-_." else "_" for char in test_name
+        )
+        target_dir = artifacts_root / safe_test_name
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = time.strftime("%H%M%S")
+        target = target_dir / f"{timestamp}-{step}.png"
+        window.wrapper_object().capture_as_image().save(target)
+        print(f"Screenshot: {target}")
+        return target
+    except Exception as exc:
+        # Reporting should never change the functional test result.
+        print(f"Screenshot warning: {exc}")
+        return None
+
+
+def test_can_type_read_and_save_text(notepad, request):
     window, temp_path = notepad
+    test_name = request.node.name
 
     activate_file_tab(window, temp_path.name, timeout=3)
+    capture_window(window, test_name, "00-opened")
     editor = find_editor(window)
 
     set_text(editor, TEXT)
     time.sleep(0.3)
+    capture_window(window, test_name, "01-text-entered")
     assert TEXT in read_text(editor)
 
-    # Exercise a real desktop shortcut and verify its side effect on disk.
     editor.set_focus()
     editor.type_keys("^s")
     wait_for_saved_text(temp_path, TEXT)
+    capture_window(window, test_name, "02-saved")
 
-    # The file is saved, so Ctrl+W can close just this tab without a save prompt.
     close_test_tab(window, temp_path.name)
