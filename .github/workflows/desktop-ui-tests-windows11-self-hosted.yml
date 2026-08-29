@@ -1,4 +1,4 @@
-name: Desktop UI tests - Windows 11
+name: Desktop UI tests
 
 on:
   workflow_dispatch:
@@ -12,12 +12,12 @@ permissions:
 
 jobs:
   desktop-tests:
-    name: All desktop tests + screenshots + Allure
-    runs-on: windows-11-arm
+    name: Notepad UI tests + screenshots + Allure
+    runs-on: windows-latest
     timeout-minutes: 20
 
     env:
-      DESKTOP_TEST_ENVIRONMENT: github-hosted-windows11-arm
+      DESKTOP_TEST_ENVIRONMENT: github-hosted-windows-latest
       DESKTOP_TEST_ARTIFACTS_DIR: ${{ github.workspace }}\test-artifacts
 
     steps:
@@ -44,66 +44,35 @@ jobs:
       - name: Environment report
         shell: pwsh
         run: |
-          "Runner: GitHub-hosted Windows 11 ARM" | Out-File desktop-environment.txt
+          "Runner: GitHub-hosted windows-latest" | Out-File desktop-environment.txt
           "Computer: $env:COMPUTERNAME" | Add-Content desktop-environment.txt
           "OS: $([System.Environment]::OSVersion.VersionString)" | Add-Content desktop-environment.txt
           "Architecture: $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)" | Add-Content desktop-environment.txt
           "User: $env:USERNAME" | Add-Content desktop-environment.txt
           "dotnet: $(dotnet --version)" | Add-Content desktop-environment.txt
           "python: $(python --version)" | Add-Content desktop-environment.txt
-          $notepadPackage = Get-AppxPackage Microsoft.WindowsNotepad -ErrorAction SilentlyContinue
-          if ($notepadPackage) {
-            "Modern Notepad: $($notepadPackage.Version)" | Add-Content desktop-environment.txt
+
+          $notepad = Get-Item "$env:WINDIR\System32\notepad.exe" -ErrorAction SilentlyContinue
+          if ($notepad) {
+            "Notepad path: $($notepad.FullName)" | Add-Content desktop-environment.txt
+            "Notepad version: $($notepad.VersionInfo.FileVersion)" | Add-Content desktop-environment.txt
           }
+
           Get-Content desktop-environment.txt
-
-      # GitHub's fresh Windows 11 image can launch the OS privacy first-run
-      # experience over the first desktop application. Disable that experience
-      # using the official Windows OOBE policy instead of trying to click it.
-      - name: Disable Windows privacy first-run experience
-        shell: pwsh
-        run: |
-          $policyPaths = @(
-            "HKCU:\Software\Policies\Microsoft\Windows\OOBE",
-            "HKLM:\Software\Policies\Microsoft\Windows\OOBE"
-          )
-
-          foreach ($path in $policyPaths) {
-            try {
-              New-Item -Path $path -Force | Out-Null
-              New-ItemProperty `
-                -Path $path `
-                -Name DisablePrivacyExperience `
-                -PropertyType DWord `
-                -Value 1 `
-                -Force | Out-Null
-              Write-Host "Set DisablePrivacyExperience=1 at $path"
-            } catch {
-              Write-Warning "Could not set $path : $($_.Exception.Message)"
-            }
-          }
-
-          # Trigger one disposable GUI launch now so any remaining first-run
-          # initialization happens before the actual tests.
-          Start-Process notepad.exe
-          Start-Sleep -Seconds 4
-          Get-Process Notepad -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 1
 
       - name: Clean previous results
         shell: pwsh
         run: |
-          Remove-Item -Recurse -Force test-artifacts, allure-results, flaui-allure-results, allure-report, flaui/TestResults-Windows11 -ErrorAction SilentlyContinue
-          Remove-Item pywinauto-windows11.xml -Force -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force test-artifacts, allure-results, flaui-allure-results, allure-report, flaui/TestResults -ErrorAction SilentlyContinue
+          Remove-Item pywinauto-pytest.xml -Force -ErrorAction SilentlyContinue
 
       - name: Run ALL FlaUI tests
         shell: pwsh
         run: >-
           dotnet test flaui/Notepad.Tests/Notepad.Tests.csproj
           --configuration Release
-          --logger "trx;LogFileName=flaui-windows11.trx"
-          --results-directory flaui/TestResults-Windows11
+          --logger "trx;LogFileName=flaui.trx"
+          --results-directory flaui/TestResults
 
       - name: Collect FlaUI Allure results
         if: always()
@@ -126,7 +95,7 @@ jobs:
         shell: pwsh
         run: >-
           python -m pytest python/tests -vv
-          --junitxml=pywinauto-windows11.xml
+          --junitxml=pywinauto-pytest.xml
           --alluredir=allure-results
           --clean-alluredir
 
@@ -154,7 +123,7 @@ jobs:
             allure-results
             test-artifacts
             desktop-environment.txt
-            flaui/TestResults-Windows11
-            pywinauto-windows11.xml
+            flaui/TestResults
+            pywinauto-pytest.xml
           if-no-files-found: warn
           retention-days: 7
