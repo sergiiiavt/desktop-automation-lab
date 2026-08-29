@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using FlaUI.Core;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
 using FlaUI.Core.Tools;
@@ -12,64 +11,67 @@ namespace Notepad.Tests;
 [NonParallelizable]
 public class NotepadTests
 {
-    private Application? _app;
     private UIA3Automation? _automation;
     private Window? _window;
+    private int? _notepadProcessId;
 
     [SetUp]
     public void SetUp()
     {
-        // Modern Windows 11 Notepad can launch through a short-lived stub process.
-        // FlaUI must attach to the actual Notepad process that owns the visible window.
-        var existingProcessIds = Process.GetProcessesByName("Notepad")
-            .Select(process => process.Id)
-            .ToHashSet();
+        _automation = new UIA3Automation();
 
+        // Windows 11 Notepad may be launched through a short-lived stub process.
+        // Do not trust the PID returned by Process.Start(). Instead, launch the app
+        // and discover its real top-level window directly in the UI Automation tree.
         Process.Start(new ProcessStartInfo
         {
             FileName = "notepad.exe",
             UseShellExecute = true
-        });
+        })?.Dispose();
 
-        var processResult = Retry.WhileNull(
-            () => FindNewNotepadProcess(existingProcessIds),
-            timeout: TimeSpan.FromSeconds(10),
+        var windowResult = Retry.WhileNull(
+            () => FindNotepadWindow(_automation),
+            timeout: TimeSpan.FromSeconds(15),
             interval: TimeSpan.FromMilliseconds(250),
             ignoreException: true);
 
-        if (!processResult.Success || processResult.Result is null)
+        if (!windowResult.Success || windowResult.Result is null)
         {
             throw new InvalidOperationException(
-                "Could not find the real Notepad process with a visible main window. " +
-                "Close any existing Notepad windows and run the test again.");
+                "Could not find a Notepad top-level window through UI Automation. " +
+                "Close any existing Notepad windows and run the test again.\n\n" +
+                BuildDesktopDiagnostic(_automation));
         }
 
-        _app = Application.Attach(processResult.Result.Id);
-        _automation = new UIA3Automation();
-        _window = _app.GetMainWindow(_automation, TimeSpan.FromSeconds(10));
-
-        Assert.That(_window, Is.Not.Null, "Notepad main window was not found.");
+        _window = windowResult.Result;
+        _notepadProcessId = _window.Properties.ProcessId.Value;
     }
 
     [TearDown]
     public void TearDown()
     {
-        // Killing the process avoids the Save dialog after the test modifies the document.
+        // Kill the real process discovered from the UIA window so an unsaved-document
+        // dialog cannot block teardown. The launcher process may already be gone.
         try
         {
-            if (_app is { HasExited: false })
+            if (_notepadProcessId is int processId)
             {
-                _app.Kill();
+                var process = Process.GetProcessById(processId);
+                process.Kill(entireProcessTree: true);
+                process.Dispose();
             }
         }
         catch (ArgumentException)
         {
-            // The process may already have exited during teardown.
+            // Process already exited.
+        }
+        catch (InvalidOperationException)
+        {
+            // Process already exited.
         }
         finally
         {
             _automation?.Dispose();
-            _app?.Dispose();
         }
     }
 
@@ -87,33 +89,70 @@ public class NotepadTests
         Assert.That(editor.Text, Does.Contain(expected));
     }
 
-    private static Process? FindNewNotepadProcess(HashSet<int> existingProcessIds)
+    private static Window? FindNotepadWindow(UIA3Automation automation)
     {
-        foreach (var process in Process.GetProcessesByName("Notepad"))
-        {
-            if (existingProcessIds.Contains(process.Id))
-            {
-                process.Dispose();
-                continue;
-            }
+        var desktop = automation.GetDesktop();
+        var windows = desktop.FindAllChildren(cf => cf.ByControlType(ControlType.Window));
 
+        foreach (var element in windows)
+        {
             try
             {
-                process.Refresh();
-                if (!process.HasExited && process.MainWindowHandle != IntPtr.Zero)
+                var processId = element.Properties.ProcessId.Value;
+                using var process = Process.GetProcessById(processId);
+
+                if (string.Equals(process.ProcessName, "Notepad", StringComparison.OrdinalIgnoreCase))
                 {
-                    return process;
+                    return element.AsWindow();
                 }
+            }
+            catch (ArgumentException)
+            {
+                // Window/process disappeared while enumerating the desktop.
             }
             catch (InvalidOperationException)
             {
-                // Process disappeared between enumeration and inspection.
+                // Window/process disappeared while enumerating the desktop.
             }
-
-            process.Dispose();
         }
 
         return null;
+    }
+
+    private static string BuildDesktopDiagnostic(UIA3Automation automation)
+    {
+        var lines = new List<string> { "Top-level UI Automation windows:" };
+
+        try
+        {
+            var desktop = automation.GetDesktop();
+            var windows = desktop.FindAllChildren(cf => cf.ByControlType(ControlType.Window));
+
+            foreach (var element in windows)
+            {
+                var name = element.Name ?? "<no name>";
+                var processId = element.Properties.ProcessId.Value;
+                var processName = "<unknown>";
+
+                try
+                {
+                    using var process = Process.GetProcessById(processId);
+                    processName = process.ProcessName;
+                }
+                catch
+                {
+                    // Diagnostic only.
+                }
+
+                lines.Add($"- '{name}' | PID {processId} | {processName}");
+            }
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"Could not enumerate desktop windows: {ex.Message}");
+        }
+
+        return string.Join(Environment.NewLine, lines);
     }
 
     private static TextBox FindEditor(Window window)
