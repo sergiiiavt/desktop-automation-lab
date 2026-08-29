@@ -23,14 +23,13 @@ jobs:
     env:
       DESKTOP_TEST_ENVIRONMENT: github-hosted-windows-latest
       DESKTOP_TEST_ARTIFACTS_DIR: ${{ github.workspace }}\test-artifacts
-      NPM_CONFIG_CACHE: ${{ runner.temp }}\npm-cache
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
 
@@ -47,9 +46,9 @@ jobs:
           node-version: "22"
 
       - name: Cache npm downloads for Allure
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
-          path: ${{ env.NPM_CONFIG_CACHE }}
+          path: ${{ runner.temp }}\npm-cache
           key: npm-allure-${{ runner.os }}-3.16.0
 
       - name: Environment report
@@ -113,6 +112,8 @@ jobs:
       - name: Generate Allure report
         if: always()
         shell: pwsh
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}\npm-cache
         run: npx --prefer-offline -y allure@3.16.0 generate allure-results --config ./allurerc.mjs
 
       - name: Publish latest Allure report to Hetzner
@@ -192,7 +193,7 @@ jobs:
 
       - name: Upload report and screenshots
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: desktop-ui-test-report
           path: |
