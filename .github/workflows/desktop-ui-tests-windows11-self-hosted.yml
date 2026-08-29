@@ -13,11 +13,11 @@ permissions:
 jobs:
   desktop-tests:
     name: All desktop tests + screenshots + Allure
-    runs-on: [self-hosted, Windows, desktop-ui]
+    runs-on: windows-11-arm
     timeout-minutes: 20
 
     env:
-      DESKTOP_TEST_ENVIRONMENT: remote-windows11
+      DESKTOP_TEST_ENVIRONMENT: github-hosted-windows11-arm
       DESKTOP_TEST_ARTIFACTS_DIR: ${{ github.workspace }}\test-artifacts
 
     steps:
@@ -44,9 +44,10 @@ jobs:
       - name: Environment report
         shell: pwsh
         run: |
-          "Runner: remote Windows 11" | Out-File desktop-environment.txt
+          "Runner: GitHub-hosted Windows 11 ARM" | Out-File desktop-environment.txt
           "Computer: $env:COMPUTERNAME" | Add-Content desktop-environment.txt
           "OS: $([System.Environment]::OSVersion.VersionString)" | Add-Content desktop-environment.txt
+          "Architecture: $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)" | Add-Content desktop-environment.txt
           "User: $env:USERNAME" | Add-Content desktop-environment.txt
           "dotnet: $(dotnet --version)" | Add-Content desktop-environment.txt
           "python: $(python --version)" | Add-Content desktop-environment.txt
