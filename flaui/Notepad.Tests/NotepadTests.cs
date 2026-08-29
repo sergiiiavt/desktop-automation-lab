@@ -6,7 +6,9 @@ using FlaUI.Core.Tools;
 using FlaUI.Core.WindowsAPI;
 using FlaUI.UIA3;
 using NUnit.Framework;
-using System.Windows.Forms;
+using FlaUITextBox = FlaUI.Core.AutomationElements.TextBox;
+using WinFormsClipboard = System.Windows.Forms.Clipboard;
+using WinFormsInputLanguage = System.Windows.Forms.InputLanguage;
 
 namespace Notepad.Tests;
 
@@ -183,14 +185,14 @@ public class NotepadTests
         Assert.That(savedText, Does.Contain($"**{text}**"));
     }
 
-    private static void ReplaceTextWithClipboard(TextBox editor, string text)
+    private static void ReplaceTextWithClipboard(FlaUITextBox editor, string text)
     {
         editor.Focus();
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
 
-        // Pasting is deliberate here. FlaUI Keyboard.Type(string) uses VkKeyScan and
-        // therefore depends on the active keyboard layout. Clipboard + Ctrl+V keeps
-        // the same user-visible input on EN, UA and CI runner layouts.
+        // FlaUI Keyboard.Type(string) uses keyboard-layout mapping. Clipboard + Ctrl+V
+        // keeps text deterministic across EN, UA and hosted runner layouts while still
+        // exercising a real desktop paste action.
         SetClipboardTextSta(text);
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_V);
         Thread.Sleep(300);
@@ -204,7 +206,7 @@ public class NotepadTests
         {
             try
             {
-                Clipboard.SetText(text);
+                WinFormsClipboard.SetText(text);
             }
             catch (Exception ex)
             {
@@ -241,7 +243,7 @@ public class NotepadTests
         try
         {
             TestContext.Progress.WriteLine(
-                $"Keyboard layout: {InputLanguage.CurrentInputLanguage.Culture.Name}");
+                $"Keyboard layout: {WinFormsInputLanguage.CurrentInputLanguage.Culture.Name}");
         }
         catch (Exception ex)
         {
@@ -366,7 +368,7 @@ public class NotepadTests
         return string.Join(Environment.NewLine, lines);
     }
 
-    private static TextBox FindEditor(Window window)
+    private static FlaUITextBox FindEditor(Window window)
     {
         var result = Retry.WhileNull(
             () => window.FindFirstDescendant(cf => cf.ByControlType(ControlType.Document))
