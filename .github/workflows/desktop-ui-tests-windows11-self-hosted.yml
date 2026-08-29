@@ -57,71 +57,28 @@ jobs:
           }
           Get-Content desktop-environment.txt
 
-      # On a fresh GitHub Windows 11 image the privacy first-run screen is not
-      # necessarily created until the first desktop app is launched. Trigger an
-      # interactive app first, then wait for the screen and dismiss it. This is
-      # runner bootstrap only; the actual tests stay identical to local runs.
-      - name: Initialize desktop and dismiss Windows privacy screen
+      # Fresh GitHub Windows 11 ARM images can show the Windows privacy wizard
+      # above the first desktop app. The wizard is visible in screenshots but is
+      # not exposed reliably through UI Automation on this runner image. It does,
+      # however, own keyboard focus. Launch a disposable Notepad window and press
+      # Enter several times to advance Next/Accept. Once the wizard is gone, any
+      # extra Enter presses only affect the disposable Notepad, which is killed.
+      # The actual test code remains exactly the same locally and in CI.
+      - name: Initialize desktop and dismiss Windows privacy wizard
         shell: pwsh
         run: |
-          Add-Type -AssemblyName UIAutomationClient
-          Add-Type -AssemblyName UIAutomationTypes
+          Add-Type -AssemblyName System.Windows.Forms
 
           Start-Process notepad.exe
+          Start-Sleep -Seconds 3
+
+          1..10 | ForEach-Object {
+            Write-Host "Privacy bootstrap Enter $_/10"
+            [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+            Start-Sleep -Milliseconds 700
+          }
+
           Start-Sleep -Seconds 2
-
-          $root = [System.Windows.Automation.AutomationElement]::RootElement
-          $acceptCondition = [System.Windows.Automation.AndCondition]::new(
-            [System.Windows.Automation.PropertyCondition]::new(
-              [System.Windows.Automation.AutomationElement]::NameProperty,
-              "Accept"
-            ),
-            [System.Windows.Automation.PropertyCondition]::new(
-              [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-              [System.Windows.Automation.ControlType]::Button
-            )
-          )
-          $privacyTextCondition = [System.Windows.Automation.PropertyCondition]::new(
-            [System.Windows.Automation.AutomationElement]::NameProperty,
-            "Choose privacy settings for your device"
-          )
-
-          $deadline = (Get-Date).AddSeconds(15)
-          $accepted = $false
-
-          while ((Get-Date) -lt $deadline) {
-            $accept = $root.FindFirst(
-              [System.Windows.Automation.TreeScope]::Descendants,
-              $acceptCondition
-            )
-
-            if ($null -ne $accept) {
-              Write-Host "Windows privacy screen detected; invoking Accept."
-              $invoke = $accept.GetCurrentPattern(
-                [System.Windows.Automation.InvokePattern]::Pattern
-              )
-              $invoke.Invoke()
-              $accepted = $true
-              break
-            }
-
-            $privacyText = $root.FindFirst(
-              [System.Windows.Automation.TreeScope]::Descendants,
-              $privacyTextCondition
-            )
-            if ($null -ne $privacyText) {
-              Write-Host "Privacy screen is visible; waiting for Accept control..."
-            }
-
-            Start-Sleep -Milliseconds 500
-          }
-
-          if ($accepted) {
-            Start-Sleep -Seconds 3
-          } else {
-            Write-Host "Privacy screen/Accept button was not detected after desktop initialization."
-          }
-
           Get-Process Notepad -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 1
 
