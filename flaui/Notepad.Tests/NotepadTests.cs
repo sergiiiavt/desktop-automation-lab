@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Allure.Net.Commons;
+using Allure.NUnit;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
 using FlaUI.Core.Input;
@@ -12,6 +14,7 @@ using WinFormsInputLanguage = System.Windows.Forms.InputLanguage;
 
 namespace Notepad.Tests;
 
+[AllureNUnit]
 [TestFixture]
 [NonParallelizable]
 public class NotepadTests
@@ -231,6 +234,7 @@ public class NotepadTests
             // more useful in a test report and avoids recording unrelated applications.
             _window.CaptureToFile(screenshotPath);
             TestContext.AddTestAttachment(screenshotPath, $"Notepad: {step}");
+            AllureApi.AddAttachment($"Notepad - {step}", "image/png", screenshotPath);
             TestContext.Progress.WriteLine($"Screenshot: {screenshotPath}");
         }
         catch (Exception ex)
