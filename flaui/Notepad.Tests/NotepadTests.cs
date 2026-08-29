@@ -141,20 +141,16 @@ public class NotepadTests
         // Second user action: Ctrl+A selects existing content, typing replaces it.
         ReplaceTextWithKeyboard(editor, replacementText);
 
-        Assert.Multiple(() =>
-        {
-            Assert.That(editor.Text, Does.Contain(replacementText));
-            Assert.That(editor.Text, Does.Not.Contain(initialText));
-        });
+        // Keep these as separate assertions. NUnit 4 exposes two Assert.Multiple
+        // delegate overloads, and an untyped lambda can be ambiguous at compile time.
+        Assert.That(editor.Text, Does.Contain(replacementText));
+        Assert.That(editor.Text, Does.Not.Contain(initialText));
 
         SaveWithKeyboard();
 
         var savedText = File.ReadAllText(_tempFilePath!);
-        Assert.Multiple(() =>
-        {
-            Assert.That(savedText, Does.Contain(replacementText));
-            Assert.That(savedText, Does.Not.Contain(initialText));
-        });
+        Assert.That(savedText, Does.Contain(replacementText));
+        Assert.That(savedText, Does.Not.Contain(initialText));
     }
 
     [Test]
@@ -171,13 +167,18 @@ public class NotepadTests
         var editor = FindEditor(_window!);
         ReplaceTextWithKeyboard(editor, text);
 
-        // Select all content, apply Heading 1, then bold.
+        // Select all content, apply Heading 1 with Ctrl+Alt+1, then toggle Bold with Ctrl+B.
         editor.Focus();
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
+
+        // VK_MENU (0x12) is the Win32 virtual-key value for Alt. FlaUI's
+        // VirtualKeyShort enum used by this project does not expose a MENU member.
+        var altKey = (VirtualKeyShort)0x12;
         Keyboard.TypeSimultaneously(
             VirtualKeyShort.CONTROL,
-            VirtualKeyShort.MENU,
+            altKey,
             VirtualKeyShort.KEY_1);
+
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_B);
         Thread.Sleep(500);
 
@@ -185,13 +186,12 @@ public class NotepadTests
 
         var savedText = File.ReadAllText(_tempFilePath!);
 
-        // Modern Notepad formatting is stored as Markdown. H1 contributes '# ',
-        // and bold contributes '**' around the selected text.
-        Assert.Multiple(() =>
-        {
-            Assert.That(savedText.TrimStart(), Does.StartWith("# "));
-            Assert.That(savedText, Does.Contain($"**{text}**"));
-        });
+        // The formatting must not lose the selected text. On modern Notepad builds
+        // that persist formatting as Markdown, H1 and bold are represented by '# '
+        // and '**...**'.
+        Assert.That(savedText, Does.Contain(text));
+        Assert.That(savedText.TrimStart(), Does.StartWith("# "));
+        Assert.That(savedText, Does.Contain($"**{text}**"));
     }
 
     private static void ReplaceTextWithKeyboard(TextBox editor, string text)
