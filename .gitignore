@@ -1,0 +1,18 @@
+# .NET
+**/bin/
+**/obj/
+TestResults/
+*.trx
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.xml
+
+# IDE
+.vs/
+.vscode/
+.idea/
