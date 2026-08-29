@@ -47,6 +47,13 @@ def notepad():
 
 
 def find_window_for_file(desktop, file_name: str, timeout: float):
+    """Find the real Notepad window and return a WindowSpecification.
+
+    Desktop.windows() returns UIAWrapper objects. Wrappers are concrete UI elements
+    and do not provide wait()/wait_not(). Re-wrap the matching HWND through
+    Desktop.window(handle=...) so the rest of the test gets a WindowSpecification,
+    which supports synchronization and child_window() locators.
+    """
     deadline = time.time() + timeout
     last_titles = []
 
@@ -57,7 +64,7 @@ def find_window_for_file(desktop, file_name: str, timeout: float):
                 title = candidate.window_text()
                 last_titles.append(title)
                 if file_name.lower() in title.lower():
-                    return candidate
+                    return desktop.window(handle=candidate.handle)
             except Exception:
                 continue
         time.sleep(0.25)
