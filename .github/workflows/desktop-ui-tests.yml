@@ -1,4 +1,4 @@
-name: Desktop UI tests
+name: Desktop UI baseline - GitHub hosted
 
 on:
   workflow_dispatch:
@@ -12,9 +12,11 @@ permissions:
 
 jobs:
   flaui:
-    name: FlaUI / NUnit
+    name: FlaUI baseline / NUnit
     runs-on: windows-latest
     timeout-minutes: 10
+    env:
+      DESKTOP_TEST_ENVIRONMENT: github-hosted-windows
 
     steps:
       - name: Checkout
@@ -25,26 +27,45 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Run FlaUI Notepad test
+      - name: Capture runner environment
+        shell: pwsh
+        run: |
+          "Runner: GitHub-hosted" | Out-File flaui-environment.txt
+          "OS: $([System.Environment]::OSVersion.VersionString)" | Add-Content flaui-environment.txt
+          "PowerShell: $($PSVersionTable.PSVersion)" | Add-Content flaui-environment.txt
+          "dotnet: $(dotnet --version)" | Add-Content flaui-environment.txt
+          $notepad = Get-Item "$env:WINDIR\System32\notepad.exe" -ErrorAction SilentlyContinue
+          if ($notepad) {
+            "Notepad path: $($notepad.FullName)" | Add-Content flaui-environment.txt
+            "Notepad version: $($notepad.VersionInfo.FileVersion)" | Add-Content flaui-environment.txt
+          }
+          Get-Content flaui-environment.txt
+
+      - name: Run FlaUI baseline tests only
         shell: pwsh
         run: >-
           dotnet test flaui/Notepad.Tests/Notepad.Tests.csproj
           --configuration Release
+          --filter "TestCategory=Baseline"
           --logger "trx;LogFileName=flaui.trx"
           --results-directory flaui/TestResults
 
-      - name: Upload FlaUI test result
+      - name: Upload FlaUI baseline result
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: flaui-test-result
-          path: flaui/TestResults
+          name: flaui-github-hosted-baseline
+          path: |
+            flaui/TestResults
+            flaui-environment.txt
           if-no-files-found: ignore
 
   pywinauto:
-    name: pywinauto / pytest
+    name: pywinauto baseline / pytest
     runs-on: windows-latest
     timeout-minutes: 10
+    env:
+      DESKTOP_TEST_ENVIRONMENT: github-hosted-windows
 
     steps:
       - name: Checkout
@@ -61,14 +82,14 @@ jobs:
         shell: pwsh
         run: python -m pip install -r python/requirements.txt
 
-      - name: Run pywinauto Notepad test
+      - name: Run pywinauto baseline test
         shell: pwsh
         run: python -m pytest python/tests -vv --junitxml=pywinauto-pytest.xml
 
-      - name: Upload pywinauto test result
+      - name: Upload pywinauto baseline result
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pywinauto-test-result
+          name: pywinauto-github-hosted-baseline
           path: pywinauto-pytest.xml
           if-no-files-found: ignore
