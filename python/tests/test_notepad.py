@@ -4,6 +4,7 @@ import tempfile
 import time
 from pathlib import Path
 
+import allure
 import pytest
 from pywinauto import Desktop
 from pywinauto.findwindows import ElementNotFoundError
@@ -198,7 +199,7 @@ def close_test_tab(window, file_name: str) -> None:
 
 
 def capture_window(window, test_name: str, step: str) -> Path | None:
-    """Capture only the Notepad window for the portable HTML/artifact report."""
+    """Capture the Notepad window and attach it directly to the Allure test."""
     try:
         artifacts_root = Path(
             os.environ.get("DESKTOP_TEST_ARTIFACTS_DIR", "python/TestArtifacts")
@@ -211,7 +212,15 @@ def capture_window(window, test_name: str, step: str) -> Path | None:
 
         timestamp = time.strftime("%H%M%S")
         target = target_dir / f"{timestamp}-{step}.png"
-        window.wrapper_object().capture_as_image().save(target)
+        image = window.wrapper_object().capture_as_image()
+        image.save(target)
+
+        allure.attach(
+            target.read_bytes(),
+            name=f"Notepad - {step}",
+            attachment_type=allure.attachment_type.PNG,
+        )
+
         print(f"Screenshot: {target}")
         return target
     except Exception as exc:
@@ -220,22 +229,28 @@ def capture_window(window, test_name: str, step: str) -> Path | None:
         return None
 
 
+@allure.feature("Notepad desktop automation")
+@allure.title("Can type, read and save text in Notepad")
 def test_can_type_read_and_save_text(notepad, request):
     window, temp_path = notepad
     test_name = request.node.name
 
-    activate_file_tab(window, temp_path.name, timeout=3)
-    capture_window(window, test_name, "00-opened")
-    editor = find_editor(window)
+    with allure.step("Open the exact Notepad test tab"):
+        activate_file_tab(window, temp_path.name, timeout=3)
+        capture_window(window, test_name, "00-opened")
+        editor = find_editor(window)
 
-    set_text(editor, TEXT)
-    time.sleep(0.3)
-    capture_window(window, test_name, "01-text-entered")
-    assert TEXT in read_text(editor)
+    with allure.step("Type text into Notepad"):
+        set_text(editor, TEXT)
+        time.sleep(0.3)
+        capture_window(window, test_name, "01-text-entered")
+        assert TEXT in read_text(editor)
 
-    editor.set_focus()
-    editor.type_keys("^s")
-    wait_for_saved_text(temp_path, TEXT)
-    capture_window(window, test_name, "02-saved")
+    with allure.step("Save with Ctrl+S and verify the file on disk"):
+        editor.set_focus()
+        editor.type_keys("^s")
+        wait_for_saved_text(temp_path, TEXT)
+        capture_window(window, test_name, "02-saved")
 
-    close_test_tab(window, temp_path.name)
+    with allure.step("Close only the test tab"):
+        close_test_tab(window, temp_path.name)
