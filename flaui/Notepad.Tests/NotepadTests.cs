@@ -26,9 +26,17 @@ public class NotepadTests
     {
         _automation = new UIA3Automation();
 
+        // Formatting in modern Notepad is Markdown. Opening a .txt file and then
+        // applying H1/Bold causes Notepad to show a "save as Markdown" modal on Ctrl+S.
+        // Baseline tests deliberately remain plain .txt; the formatting test starts
+        // with a real .md file so saving is deterministic and does not need a dialog.
+        var extension = TestContext.CurrentContext.Test.Name == nameof(CanFormatSelectedTextAsHeading1AndBold)
+            ? ".md"
+            : ".txt";
+
         _tempFilePath = Path.Combine(
             Path.GetTempPath(),
-            $"desktop-automation-{Guid.NewGuid():N}.txt");
+            $"desktop-automation-{Guid.NewGuid():N}{extension}");
         File.WriteAllText(_tempFilePath, string.Empty);
 
         Process.Start(new ProcessStartInfo
@@ -65,15 +73,14 @@ public class NotepadTests
 
         try
         {
-            // Modern Windows 11 Notepad is a multi-tab app. Closing/killing the whole
-            // process can leave the tab in Notepad's restored session. Close only the
-            // current test tab first, while its temporary file still exists.
             if (_window is not null)
             {
+                // Modern Notepad is multi-tab. Close only the tab created by this test,
+                // not the shared Notepad process, otherwise session restore keeps stale tabs.
                 var editor = FindEditor(_window);
                 editor.Focus();
                 Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_W);
-                Thread.Sleep(400);
+                Thread.Sleep(350);
 
                 TryDiscardUnsavedChanges();
                 testTabClosed = WaitUntilTestFileIsNoLongerOpen(TimeSpan.FromSeconds(3));
@@ -83,33 +90,8 @@ public class NotepadTests
         {
             TestContext.Progress.WriteLine($"Tab cleanup warning: {ex.Message}");
         }
-
-        try
-        {
-            // On classic Notepad Ctrl+W closes the process. On modern Notepad the
-            // shared process may legitimately stay alive because other tabs exist,
-            // so do not kill it here.
-            if (_notepadProcessId is int processId)
-            {
-                try
-                {
-                    using var process = Process.GetProcessById(processId);
-                    TestContext.Progress.WriteLine(
-                        process.HasExited
-                            ? "Notepad process exited after test-tab cleanup."
-                            : "Notepad process remains alive; other tabs/session may own it.");
-                }
-                catch (ArgumentException)
-                {
-                    // Process already exited.
-                }
-            }
-        }
         finally
         {
-            // Never delete a file which Notepad still has open in its session. That
-            // was the source of stale desktop-automation-* tabs and "file not found"
-            // dialogs on the next local run.
             if (_tempFilePath is not null)
             {
                 if (testTabClosed || !IsTestFileOpen())
@@ -181,17 +163,19 @@ public class NotepadTests
     {
         const string text = "Formatted desktop heading";
 
-        // This test is intentionally NOT skipped based on feature detection. The
-        // GitHub-hosted pipeline excludes ModernNotepad tests entirely. When the full
-        // suite is run on a real Windows 11 machine, this test must execute and either
-        // pass or fail with evidence instead of reporting a misleading Skip.
+        Assert.That(
+            Path.GetExtension(_tempFilePath),
+            Is.EqualTo(".md"),
+            "Formatting test must use a Markdown file to avoid Notepad's save-conversion dialog.");
+
         var editor = FindEditor(_window!);
         ReplaceTextWithClipboard(editor, text);
 
+        // User flow: select all -> H1 -> Bold -> Save.
         editor.Focus();
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
 
-        var altKey = (VirtualKeyShort)0x12;
+        var altKey = (VirtualKeyShort)0x12; // VK_MENU / Alt
         Keyboard.TypeSimultaneously(
             VirtualKeyShort.CONTROL,
             altKey,
@@ -203,18 +187,11 @@ public class NotepadTests
         SaveWithKeyboard();
 
         var savedText = File.ReadAllText(_tempFilePath!);
-        Assert.That(
-            savedText,
-            Does.Contain(text),
-            BuildFormattingDiagnostic(_window!));
-        Assert.That(
-            savedText.TrimStart(),
-            Does.StartWith("# "),
-            BuildFormattingDiagnostic(_window!));
-        Assert.That(
-            savedText,
-            Does.Contain($"**{text}**"),
-            BuildFormattingDiagnostic(_window!));
+        var diagnostic = BuildFormattingDiagnostic(_window!);
+
+        Assert.That(savedText, Does.Contain(text), diagnostic);
+        Assert.That(savedText.TrimStart(), Does.StartWith("# "), diagnostic);
+        Assert.That(savedText, Does.Contain($"**{text}**"), diagnostic);
     }
 
     private static void ReplaceTextWithClipboard(FlaUITextBox editor, string text)
@@ -222,9 +199,8 @@ public class NotepadTests
         editor.Focus();
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
 
-        // FlaUI Keyboard.Type(string) uses keyboard-layout mapping. Clipboard + Ctrl+V
-        // keeps text deterministic across EN, UA and hosted runner layouts while still
-        // exercising a real desktop paste action.
+        // FlaUI Keyboard.Type(string) maps characters through the active keyboard layout.
+        // Clipboard + Ctrl+V keeps the entered text deterministic on UA, EN and CI runners.
         SetClipboardTextSta(text);
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_V);
         Thread.Sleep(300);
@@ -261,7 +237,7 @@ public class NotepadTests
     private static void SaveWithKeyboard()
     {
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_S);
-        Thread.Sleep(500);
+        Thread.Sleep(600);
     }
 
     private void TryDiscardUnsavedChanges()
@@ -310,6 +286,7 @@ public class NotepadTests
     private bool WaitUntilTestFileIsNoLongerOpen(TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
+
         while (DateTime.UtcNow < deadline)
         {
             if (!IsTestFileOpen())
@@ -373,7 +350,7 @@ public class NotepadTests
         }
         catch
         {
-            // Treat an inaccessible/disappeared window as closed for cleanup purposes.
+            // Disappeared/inaccessible UI is treated as closed for cleanup purposes.
         }
 
         return false;
@@ -399,7 +376,7 @@ public class NotepadTests
         TestContext.Progress.WriteLine("=== Desktop test environment ===");
         TestContext.Progress.WriteLine($"Execution: {executionEnvironment}");
         TestContext.Progress.WriteLine($"OS: {Environment.OSVersion}");
-        TestContext.Progress.WriteLine($"64-bit OS: {Environment.Is64BitOperatingSystem}");
+        TestContext.Progress.WriteLine($"Test file: {_tempFilePath}");
 
         try
         {
@@ -416,11 +393,11 @@ public class NotepadTests
             if (_notepadProcessId is int processId)
             {
                 using var process = Process.GetProcessById(processId);
-                var version = process.MainModule?.FileVersionInfo.FileVersion ?? "unknown";
-                var path = process.MainModule?.FileName ?? "unknown";
                 TestContext.Progress.WriteLine($"Notepad PID: {processId}");
-                TestContext.Progress.WriteLine($"Notepad version: {version}");
-                TestContext.Progress.WriteLine($"Notepad path: {path}");
+                TestContext.Progress.WriteLine(
+                    $"Notepad version: {process.MainModule?.FileVersionInfo.FileVersion ?? "unknown"}");
+                TestContext.Progress.WriteLine(
+                    $"Notepad path: {process.MainModule?.FileName ?? "unknown"}");
             }
         }
         catch (Exception ex)
@@ -439,9 +416,7 @@ public class NotepadTests
         {
             "H1",
             "Heading",
-            "Heading 1",
             "Заголовок",
-            "Заголовок 1",
             "Назва",
             "Bold",
             "Жирний",
@@ -450,13 +425,12 @@ public class NotepadTests
 
         try
         {
-            return window.FindAllDescendants()
-                .Any(element =>
-                {
-                    var name = element.Name ?? string.Empty;
-                    return formattingTokens.Any(token =>
-                        name.Contains(token, StringComparison.OrdinalIgnoreCase));
-                });
+            return window.FindAllDescendants().Any(element =>
+            {
+                var name = element.Name ?? string.Empty;
+                return formattingTokens.Any(token =>
+                    name.Contains(token, StringComparison.OrdinalIgnoreCase));
+            });
         }
         catch
         {
@@ -514,8 +488,15 @@ public class NotepadTests
                     continue;
                 }
 
-                var windowName = element.Name ?? string.Empty;
-                if (windowName.Contains(expectedFileName, StringComparison.OrdinalIgnoreCase))
+                if ((element.Name ?? string.Empty)
+                    .Contains(expectedFileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return element.AsWindow();
+                }
+
+                if (element.FindAllDescendants().Any(descendant =>
+                        (descendant.Name ?? string.Empty)
+                            .Contains(expectedFileName, StringComparison.OrdinalIgnoreCase)))
                 {
                     return element.AsWindow();
                 }
