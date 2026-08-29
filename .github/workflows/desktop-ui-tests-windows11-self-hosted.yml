@@ -65,7 +65,7 @@ jobs:
         run: |
           Remove-Item -Recurse -Force test-artifacts, allure-results, allure-report, flaui/TestResults -ErrorAction SilentlyContinue
           Remove-Item pywinauto-pytest.xml -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path allure-results/flaui, allure-results/python | Out-Null
+          New-Item -ItemType Directory -Force -Path allure-results | Out-Null
 
       - name: Run ALL FlaUI tests
         shell: pwsh
@@ -86,22 +86,18 @@ jobs:
         run: >-
           python -m pytest python/tests -vv
           --junitxml=pywinauto-pytest.xml
-          --alluredir=allure-results/python
-          --clean-alluredir
+          --alluredir=allure-results
 
       - name: Show collected Allure results
         if: always()
         shell: pwsh
         run: |
-          Write-Host "FlaUI result files:"
-          Get-ChildItem allure-results/flaui -File | Select-Object Name, Length
-
-          Write-Host "Python result files:"
-          Get-ChildItem allure-results/python -File | Select-Object Name, Length
-
-          $flauiResults = @(Get-ChildItem allure-results/flaui -Filter "*-result.json" -File)
-          $pythonResults = @(Get-ChildItem allure-results/python -Filter "*-result.json" -File)
-          Write-Host "Allure test results: FlaUI=$($flauiResults.Count), Python=$($pythonResults.Count), Total=$($flauiResults.Count + $pythonResults.Count)"
+          Get-ChildItem allure-results -File | Select-Object Name, Length
+          $results = @(Get-ChildItem allure-results -Filter "*-result.json" -File)
+          Write-Host "Allure test result files in shared directory: $($results.Count)"
+          if ($results.Count -ne 4) {
+            Write-Warning "Expected 4 Allure test results (3 FlaUI + 1 pywinauto), found $($results.Count)."
+          }
 
       - name: Generate Allure report
         if: always()
