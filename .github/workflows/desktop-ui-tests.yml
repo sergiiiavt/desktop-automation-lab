@@ -23,32 +23,33 @@ jobs:
     env:
       DESKTOP_TEST_ENVIRONMENT: github-hosted-windows-latest
       DESKTOP_TEST_ARTIFACTS_DIR: ${{ github.workspace }}\test-artifacts
+      NPM_CONFIG_CACHE: ${{ runner.temp }}\npm-cache
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 8.0.x
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: python/requirements.txt
 
       - name: Setup Node for Allure
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
       - name: Cache npm downloads for Allure
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
-          path: ~\AppData\Local\npm-cache
+          path: ${{ env.NPM_CONFIG_CACHE }}
           key: npm-allure-${{ runner.os }}-3.16.0
 
       - name: Environment report
@@ -191,7 +192,7 @@ jobs:
 
       - name: Upload report and screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: desktop-ui-test-report
           path: |
