@@ -28,18 +28,9 @@ public class NotepadTests
     public void SetUp()
     {
         _automation = new UIA3Automation();
-
-        // Formatting in modern Notepad is Markdown. Opening a .txt file and then
-        // applying H1/Bold causes Notepad to show a "save as Markdown" modal on Ctrl+S.
-        // Baseline tests deliberately remain plain .txt; the formatting test starts
-        // with a real .md file so saving is deterministic and does not need a dialog.
-        var extension = TestContext.CurrentContext.Test.Name == nameof(CanFormatSelectedTextAsHeading1AndBold)
-            ? ".md"
-            : ".txt";
-
         _tempFilePath = Path.Combine(
             Path.GetTempPath(),
-            $"desktop-automation-{Guid.NewGuid():N}{extension}");
+            $"desktop-automation-{Guid.NewGuid():N}.txt");
         File.WriteAllText(_tempFilePath, string.Empty);
 
         Process.Start(new ProcessStartInfo
@@ -50,7 +41,6 @@ public class NotepadTests
         })?.Dispose();
 
         var expectedFileName = Path.GetFileName(_tempFilePath);
-
         var windowResult = Retry.WhileNull(
             () => FindNotepadWindow(_automation, expectedFileName),
             timeout: TimeSpan.FromSeconds(15),
@@ -73,49 +63,38 @@ public class NotepadTests
     [TearDown]
     public void TearDown()
     {
-        var testTabClosed = false;
+        var testDocumentClosed = false;
 
         try
         {
-            // Keep a final visual state even when an assertion failed.
             CaptureWindow("99-final");
 
             if (_window is not null)
             {
-                // Modern Notepad is multi-tab. Close only the tab created by this test,
-                // not the shared Notepad process, otherwise session restore keeps stale tabs.
                 var editor = FindEditor(_window);
                 editor.Focus();
                 Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_W);
                 Thread.Sleep(350);
 
                 TryDiscardUnsavedChanges();
-                testTabClosed = WaitUntilTestFileIsNoLongerOpen(TimeSpan.FromSeconds(3));
+                testDocumentClosed = WaitUntilTestFileIsNoLongerOpen(TimeSpan.FromSeconds(3));
             }
         }
         catch (Exception ex)
         {
-            TestContext.Progress.WriteLine($"Tab cleanup warning: {ex.Message}");
+            TestContext.Progress.WriteLine($"Cleanup warning: {ex.Message}");
         }
         finally
         {
-            if (_tempFilePath is not null)
+            if (_tempFilePath is not null && (testDocumentClosed || !IsTestFileOpen()))
             {
-                if (testTabClosed || !IsTestFileOpen())
+                try
                 {
-                    try
-                    {
-                        File.Delete(_tempFilePath);
-                    }
-                    catch (Exception ex)
-                    {
-                        TestContext.Progress.WriteLine($"Temp-file cleanup warning: {ex.Message}");
-                    }
+                    File.Delete(_tempFilePath);
                 }
-                else
+                catch (Exception ex)
                 {
-                    TestContext.Progress.WriteLine(
-                        $"Temp file was NOT deleted because Notepad still exposes its tab: {_tempFilePath}");
+                    TestContext.Progress.WriteLine($"Temp-file cleanup warning: {ex.Message}");
                 }
             }
 
@@ -124,7 +103,7 @@ public class NotepadTests
     }
 
     [Test]
-    [Category("Baseline")]
+    [Category("PortableNotepad")]
     public void CanTypeAndSaveText()
     {
         const string expected = "Hello desktop automation";
@@ -142,7 +121,7 @@ public class NotepadTests
     }
 
     [Test]
-    [Category("Baseline")]
+    [Category("PortableNotepad")]
     public void CanReplaceExistingTextAndSave()
     {
         const string initialText = "Initial desktop text";
@@ -170,43 +149,39 @@ public class NotepadTests
     }
 
     [Test]
-    [Category("ModernNotepad")]
-    public void CanFormatSelectedTextAsHeading1AndBold()
+    [Category("PortableNotepad")]
+    public void CanSelectAllCopyReplaceAndSave()
     {
-        const string text = "Formatted desktop heading";
-
-        Assert.That(
-            Path.GetExtension(_tempFilePath),
-            Is.EqualTo(".md"),
-            "Formatting test must use a Markdown file to avoid Notepad's save-conversion dialog.");
+        const string originalText = "Text selected and copied by FlaUI";
+        const string replacementText = "Text replaced after copy";
 
         var editor = FindEditor(_window!);
-        ReplaceTextWithClipboard(editor, text);
-        CaptureWindow("01-text-entered");
+        ReplaceTextWithClipboard(editor, originalText);
+        CaptureWindow("01-original-text-entered");
 
-        // User flow: select all -> H1 -> Bold -> Save.
         editor.Focus();
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
+        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_C);
+        Thread.Sleep(300);
+        CaptureWindow("02-text-selected-and-copied");
 
-        var altKey = (VirtualKeyShort)0x12; // VK_MENU / Alt
-        Keyboard.TypeSimultaneously(
-            VirtualKeyShort.CONTROL,
-            altKey,
-            VirtualKeyShort.KEY_1);
+        var copiedText = GetClipboardTextSta();
+        Assert.That(copiedText, Does.Contain(originalText));
 
-        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_B);
-        Thread.Sleep(500);
-        CaptureWindow("02-h1-bold-applied");
+        SetClipboardTextSta(replacementText);
+        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_V);
+        Thread.Sleep(300);
+        CaptureWindow("03-selection-replaced");
+
+        Assert.That(editor.Text, Does.Contain(replacementText));
+        Assert.That(editor.Text, Does.Not.Contain(originalText));
 
         SaveWithKeyboard();
-        CaptureWindow("03-markdown-saved");
+        CaptureWindow("04-saved");
 
         var savedText = File.ReadAllText(_tempFilePath!);
-        var diagnostic = BuildFormattingDiagnostic(_window!);
-
-        Assert.That(savedText, Does.Contain(text), diagnostic);
-        Assert.That(savedText.TrimStart(), Does.StartWith("# "), diagnostic);
-        Assert.That(savedText, Does.Contain($"**{text}**"), diagnostic);
+        Assert.That(savedText, Does.Contain(replacementText));
+        Assert.That(savedText, Does.Not.Contain(originalText));
     }
 
     private void CaptureWindow(string step)
@@ -230,8 +205,6 @@ public class NotepadTests
             var fileName = $"{DateTime.UtcNow:HHmmssfff}-{SanitizeFileName(step)}.png";
             var screenshotPath = Path.Combine(testDirectory, fileName);
 
-            // Capture the application window rather than the entire desktop. It is
-            // more useful in a test report and avoids recording unrelated applications.
             _window.CaptureToFile(screenshotPath);
             TestContext.AddTestAttachment(screenshotPath, $"Notepad: {step}");
             AllureApi.AddAttachment($"Notepad - {step}", "image/png", screenshotPath);
@@ -239,7 +212,6 @@ public class NotepadTests
         }
         catch (Exception ex)
         {
-            // Reporting must never change the functional test result.
             TestContext.Progress.WriteLine($"Screenshot warning: {ex.Message}");
         }
     }
@@ -254,9 +226,6 @@ public class NotepadTests
     {
         editor.Focus();
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
-
-        // FlaUI Keyboard.Type(string) maps characters through the active keyboard layout.
-        // Clipboard + Ctrl+V keeps the entered text deterministic on UA, EN and CI runners.
         SetClipboardTextSta(text);
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_V);
         Thread.Sleep(300);
@@ -288,6 +257,39 @@ public class NotepadTests
                 "Could not set Windows clipboard for desktop test input.",
                 clipboardError);
         }
+    }
+
+    private static string GetClipboardTextSta()
+    {
+        string? clipboardText = null;
+        Exception? clipboardError = null;
+
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                clipboardText = WinFormsClipboard.ContainsText()
+                    ? WinFormsClipboard.GetText()
+                    : string.Empty;
+            }
+            catch (Exception ex)
+            {
+                clipboardError = ex;
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+
+        if (clipboardError is not null)
+        {
+            throw new InvalidOperationException(
+                "Could not read Windows clipboard for desktop test verification.",
+                clipboardError);
+        }
+
+        return clipboardText ?? string.Empty;
     }
 
     private static void SaveWithKeyboard()
@@ -461,70 +463,7 @@ public class NotepadTests
             TestContext.Progress.WriteLine($"Notepad version/path: unavailable ({ex.Message})");
         }
 
-        TestContext.Progress.WriteLine(
-            $"Modern formatting UI detected: {HasModernFormattingUi(_window!)}");
         TestContext.Progress.WriteLine("================================");
-    }
-
-    private static bool HasModernFormattingUi(Window window)
-    {
-        var formattingTokens = new[]
-        {
-            "H1",
-            "Heading",
-            "Заголовок",
-            "Назва",
-            "Bold",
-            "Жирний",
-            "Напівжирний"
-        };
-
-        try
-        {
-            return window.FindAllDescendants().Any(element =>
-            {
-                var name = element.Name ?? string.Empty;
-                return formattingTokens.Any(token =>
-                    name.Contains(token, StringComparison.OrdinalIgnoreCase));
-            });
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static string BuildFormattingDiagnostic(Window window)
-    {
-        try
-        {
-            var interesting = window.FindAllDescendants()
-                .Where(element =>
-                    element.ControlType == ControlType.Button ||
-                    element.ControlType == ControlType.ComboBox ||
-                    element.ControlType == ControlType.MenuItem ||
-                    element.ControlType == ControlType.Text)
-                .Select(element =>
-                    $"{element.ControlType}: '{element.Name ?? "<no name>"}' | AutomationId='{element.AutomationId ?? ""}'")
-                .Where(line =>
-                    line.Contains("H1", StringComparison.OrdinalIgnoreCase) ||
-                    line.Contains("Heading", StringComparison.OrdinalIgnoreCase) ||
-                    line.Contains("Заголовок", StringComparison.OrdinalIgnoreCase) ||
-                    line.Contains("Назва", StringComparison.OrdinalIgnoreCase) ||
-                    line.Contains("Bold", StringComparison.OrdinalIgnoreCase) ||
-                    line.Contains("Жир", StringComparison.OrdinalIgnoreCase))
-                .Take(50)
-                .ToArray();
-
-            return "Formatting UI diagnostic:" + Environment.NewLine +
-                   (interesting.Length == 0
-                       ? "No matching formatting controls were exposed through UI Automation."
-                       : string.Join(Environment.NewLine, interesting));
-        }
-        catch (Exception ex)
-        {
-            return $"Formatting UI diagnostic failed: {ex.Message}";
-        }
     }
 
     private static Window? FindNotepadWindow(UIA3Automation automation, string expectedFileName)
