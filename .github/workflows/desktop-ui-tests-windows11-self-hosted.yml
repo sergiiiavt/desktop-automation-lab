@@ -213,7 +213,9 @@ jobs:
           systemctl --no-pager --full status desktop-automation-allure.service | head -n 20
           '@
 
-          $remoteSetup | & ssh -p $sshPort @sshOptions "$sshUser@$hostName" "bash -s"
+          # PowerShell here-strings use Windows CRLF; bash on Linux requires LF.
+          $remoteSetupLf = $remoteSetup.Replace("`r", "")
+          $remoteSetupLf | & ssh -p $sshPort @sshOptions "$sshUser@$hostName" "bash -s"
           if ($LASTEXITCODE -ne 0) { throw "Hetzner remote setup failed." }
 
           Remove-Item $keyPath, allure-report.tgz -Force -ErrorAction SilentlyContinue
