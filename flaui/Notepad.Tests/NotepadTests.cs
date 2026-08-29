@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
 using FlaUI.Core.Input;
@@ -13,6 +14,10 @@ namespace Notepad.Tests;
 [NonParallelizable]
 public class NotepadTests
 {
+    private const uint InputKeyboard = 1;
+    private const uint KeyEventFKeyUp = 0x0002;
+    private const uint KeyEventFUnicode = 0x0004;
+
     private UIA3Automation? _automation;
     private Window? _window;
     private int? _notepadProcessId;
@@ -133,16 +138,12 @@ public class NotepadTests
 
         var editor = FindEditor(_window!);
 
-        // First user action: enter and save initial content.
         ReplaceTextWithKeyboard(editor, initialText);
         SaveWithKeyboard();
         Assert.That(File.ReadAllText(_tempFilePath!), Does.Contain(initialText));
 
-        // Second user action: Ctrl+A selects existing content, typing replaces it.
         ReplaceTextWithKeyboard(editor, replacementText);
 
-        // Keep these as separate assertions. NUnit 4 exposes two Assert.Multiple
-        // delegate overloads, and an untyped lambda can be ambiguous at compile time.
         Assert.That(editor.Text, Does.Contain(replacementText));
         Assert.That(editor.Text, Does.Not.Contain(initialText));
 
@@ -167,12 +168,9 @@ public class NotepadTests
         var editor = FindEditor(_window!);
         ReplaceTextWithKeyboard(editor, text);
 
-        // Select all content, apply Heading 1 with Ctrl+Alt+1, then toggle Bold with Ctrl+B.
         editor.Focus();
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
 
-        // VK_MENU (0x12) is the Win32 virtual-key value for Alt. FlaUI's
-        // VirtualKeyShort enum used by this project does not expose a MENU member.
         var altKey = (VirtualKeyShort)0x12;
         Keyboard.TypeSimultaneously(
             VirtualKeyShort.CONTROL,
@@ -185,10 +183,6 @@ public class NotepadTests
         SaveWithKeyboard();
 
         var savedText = File.ReadAllText(_tempFilePath!);
-
-        // The formatting must not lose the selected text. On modern Notepad builds
-        // that persist formatting as Markdown, H1 and bold are represented by '# '
-        // and '**...**'.
         Assert.That(savedText, Does.Contain(text));
         Assert.That(savedText.TrimStart(), Does.StartWith("# "));
         Assert.That(savedText, Does.Contain($"**{text}**"));
@@ -198,8 +192,54 @@ public class NotepadTests
     {
         editor.Focus();
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
-        Keyboard.Type(text);
+
+        // FlaUI Keyboard.Type(string) internally uses VkKeyScan, which depends on
+        // the active Windows keyboard layout. Send Unicode input directly so the
+        // same test types the same text under EN, UA and other layouts.
+        TypeUnicodeText(text);
         Thread.Sleep(300);
+    }
+
+    private static void TypeUnicodeText(string text)
+    {
+        foreach (var character in text)
+        {
+            var inputs = new[]
+            {
+                CreateUnicodeInput(character, keyUp: false),
+                CreateUnicodeInput(character, keyUp: true)
+            };
+
+            var sent = SendInput(
+                (uint)inputs.Length,
+                inputs,
+                Marshal.SizeOf<NativeInput>());
+
+            if (sent != inputs.Length)
+            {
+                throw new InvalidOperationException(
+                    $"SendInput failed while typing Unicode text. Win32 error: {Marshal.GetLastWin32Error()}");
+            }
+        }
+    }
+
+    private static NativeInput CreateUnicodeInput(char character, bool keyUp)
+    {
+        return new NativeInput
+        {
+            Type = InputKeyboard,
+            Union = new InputUnion
+            {
+                Keyboard = new NativeKeyboardInput
+                {
+                    VirtualKey = 0,
+                    ScanCode = character,
+                    Flags = KeyEventFUnicode | (keyUp ? KeyEventFKeyUp : 0),
+                    Time = 0,
+                    ExtraInfo = UIntPtr.Zero
+                }
+            }
+        };
     }
 
     private static void SaveWithKeyboard()
@@ -210,8 +250,6 @@ public class NotepadTests
 
     private static bool HasModernFormattingUi(Window window)
     {
-        // The GitHub-hosted Windows runner can have an older Notepad build. Keep the
-        // formatting test local/feature-aware instead of failing the whole CI suite.
         var formattingNames = new[]
         {
             "H1",
@@ -308,8 +346,6 @@ public class NotepadTests
 
     private static TextBox FindEditor(Window window)
     {
-        // Windows Notepad has changed implementation over time.
-        // Modern versions commonly expose the editor as Document; older versions as Edit.
         var result = Retry.WhileNull(
             () => window.FindFirstDescendant(cf => cf.ByControlType(ControlType.Document))
                   ?? window.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit)),
@@ -323,5 +359,35 @@ public class NotepadTests
         }
 
         return result.Result.AsTextBox();
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(
+        uint numberOfInputs,
+        NativeInput[] inputs,
+        int sizeOfInputStructure);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeInput
+    {
+        public uint Type;
+        public InputUnion Union;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct InputUnion
+    {
+        [FieldOffset(0)]
+        public NativeKeyboardInput Keyboard;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeKeyboardInput
+    {
+        public ushort VirtualKey;
+        public ushort ScanCode;
+        public uint Flags;
+        public uint Time;
+        public UIntPtr ExtraInfo;
     }
 }
