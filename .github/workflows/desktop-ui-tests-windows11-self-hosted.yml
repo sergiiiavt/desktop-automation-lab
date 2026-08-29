@@ -57,45 +57,73 @@ jobs:
           }
           Get-Content desktop-environment.txt
 
-      # Fresh GitHub Windows 11 ARM images can start with the system privacy
-      # first-run screen on top of the desktop. It steals keyboard focus from
-      # Notepad, so dismiss it before any GUI automation begins. On machines
-      # where it is not present this step is simply a no-op.
-      - name: Dismiss Windows privacy first-run screen
+      # On a fresh GitHub Windows 11 image the privacy first-run screen is not
+      # necessarily created until the first desktop app is launched. Trigger an
+      # interactive app first, then wait for the screen and dismiss it. This is
+      # runner bootstrap only; the actual tests stay identical to local runs.
+      - name: Initialize desktop and dismiss Windows privacy screen
         shell: pwsh
         run: |
           Add-Type -AssemblyName UIAutomationClient
           Add-Type -AssemblyName UIAutomationTypes
 
+          Start-Process notepad.exe
+          Start-Sleep -Seconds 2
+
           $root = [System.Windows.Automation.AutomationElement]::RootElement
-          $nameCondition = [System.Windows.Automation.PropertyCondition]::new(
-            [System.Windows.Automation.AutomationElement]::NameProperty,
-            "Accept"
-          )
-          $typeCondition = [System.Windows.Automation.PropertyCondition]::new(
-            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-            [System.Windows.Automation.ControlType]::Button
-          )
-          $condition = [System.Windows.Automation.AndCondition]::new(
-            $nameCondition,
-            $typeCondition
-          )
-
-          $accept = $root.FindFirst(
-            [System.Windows.Automation.TreeScope]::Descendants,
-            $condition
-          )
-
-          if ($null -ne $accept) {
-            Write-Host "Windows privacy screen detected; invoking Accept."
-            $invoke = $accept.GetCurrentPattern(
-              [System.Windows.Automation.InvokePattern]::Pattern
+          $acceptCondition = [System.Windows.Automation.AndCondition]::new(
+            [System.Windows.Automation.PropertyCondition]::new(
+              [System.Windows.Automation.AutomationElement]::NameProperty,
+              "Accept"
+            ),
+            [System.Windows.Automation.PropertyCondition]::new(
+              [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+              [System.Windows.Automation.ControlType]::Button
             )
-            $invoke.Invoke()
+          )
+          $privacyTextCondition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::NameProperty,
+            "Choose privacy settings for your device"
+          )
+
+          $deadline = (Get-Date).AddSeconds(15)
+          $accepted = $false
+
+          while ((Get-Date) -lt $deadline) {
+            $accept = $root.FindFirst(
+              [System.Windows.Automation.TreeScope]::Descendants,
+              $acceptCondition
+            )
+
+            if ($null -ne $accept) {
+              Write-Host "Windows privacy screen detected; invoking Accept."
+              $invoke = $accept.GetCurrentPattern(
+                [System.Windows.Automation.InvokePattern]::Pattern
+              )
+              $invoke.Invoke()
+              $accepted = $true
+              break
+            }
+
+            $privacyText = $root.FindFirst(
+              [System.Windows.Automation.TreeScope]::Descendants,
+              $privacyTextCondition
+            )
+            if ($null -ne $privacyText) {
+              Write-Host "Privacy screen is visible; waiting for Accept control..."
+            }
+
+            Start-Sleep -Milliseconds 500
+          }
+
+          if ($accepted) {
             Start-Sleep -Seconds 3
           } else {
-            Write-Host "Windows privacy screen not present."
+            Write-Host "Privacy screen/Accept button was not detected after desktop initialization."
           }
+
+          Get-Process Notepad -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 1
 
       - name: Clean previous results
         shell: pwsh
@@ -122,8 +150,6 @@ jobs:
             Copy-Item "$source\*" $target -Recurse -Force
           }
 
-      # Keep running the Python suite even when FlaUI reports a failure so one
-      # framework cannot hide the result of the other.
       - name: Install Python dependencies
         if: always()
         shell: pwsh
