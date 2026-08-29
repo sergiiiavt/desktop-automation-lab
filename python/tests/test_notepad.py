@@ -13,13 +13,7 @@ TEXT = "Hello desktop automation"
 
 @pytest.fixture
 def notepad():
-    """Launch a uniquely named temp file and discover the real Notepad UIA window.
-
-    Modern Windows 11 Notepad can start through a short-lived launcher process, so
-    attaching to the PID returned by Application.start() is unreliable. Instead we
-    find the real top-level window in the desktop UI Automation tree by the unique
-    temporary file name.
-    """
+    """Open a unique temp file and discover its real Windows 11 Notepad window."""
     with tempfile.NamedTemporaryFile(
         prefix="desktop-automation-",
         suffix=".txt",
@@ -33,27 +27,18 @@ def notepad():
     window = find_window_for_file(desktop, temp_path.name, timeout=15)
     window.wait("visible enabled", timeout=10)
 
+    # Modern Notepad may reuse one window for several tabs. The window can be the
+    # right one while the first Document in its UIA tree belongs to another tab.
+    # Explicitly activate the tab that contains our unique temp file first.
+    activate_file_tab(window, temp_path.name, timeout=5)
+
     yield window, temp_path
 
-    # The test saves before teardown, so close Notepad normally. This avoids
-    # Windows 11 restoring an unsaved/crashed Notepad session on the next run.
-    try:
-        window.close()
-        window.wait_not("exists", timeout=5)
-    except Exception:
-        pass
-    finally:
-        temp_path.unlink(missing_ok=True)
+    temp_path.unlink(missing_ok=True)
 
 
 def find_window_for_file(desktop, file_name: str, timeout: float):
-    """Find the real Notepad window and return a WindowSpecification.
-
-    Desktop.windows() returns UIAWrapper objects. Wrappers are concrete UI elements
-    and do not provide wait()/wait_not(). Re-wrap the matching HWND through
-    Desktop.window(handle=...) so the rest of the test gets a WindowSpecification,
-    which supports synchronization and child_window() locators.
-    """
+    """Find the Notepad top-level window and return a WindowSpecification."""
     deadline = time.time() + timeout
     last_titles = []
 
@@ -75,16 +60,68 @@ def find_window_for_file(desktop, file_name: str, timeout: float):
     )
 
 
-def find_editor(window):
-    """Return the Notepad text editor across old and modern Windows versions."""
-    for control_type in ("Document", "Edit"):
-        spec = window.child_window(control_type=control_type)
-        if spec.exists(timeout=3):
-            return spec.wrapper_object()
+def activate_file_tab(window, file_name: str, timeout: float) -> None:
+    """Activate the Notepad tab that belongs to the test temp file."""
+    deadline = time.time() + timeout
+    expected_names = {file_name.lower(), Path(file_name).stem.lower()}
+    last_tabs = []
 
-    # Useful diagnostic in local and CI logs if Windows changes the UI tree.
+    while time.time() < deadline:
+        last_tabs = []
+        root = window.wrapper_object()
+
+        for tab in root.descendants(control_type="TabItem"):
+            try:
+                title = tab.window_text()
+                last_tabs.append(title)
+                title_lower = title.lower()
+
+                if any(expected in title_lower for expected in expected_names):
+                    tab.click_input()
+                    time.sleep(0.25)
+                    return
+            except Exception:
+                continue
+
+        # On classic Notepad there is no tab strip. If the window title itself is
+        # already the unique file, there is nothing to activate.
+        try:
+            window_title = root.window_text().lower()
+            if any(expected in window_title for expected in expected_names):
+                return
+        except Exception:
+            pass
+
+        time.sleep(0.25)
+
+    raise RuntimeError(
+        f"Could not activate Notepad tab for '{file_name}'. "
+        f"TabItems seen: {last_tabs}"
+    )
+
+
+def find_editor(window):
+    """Return only the visible editor of the currently active Notepad tab."""
+    root = window.wrapper_object()
+
+    for control_type in ("Document", "Edit"):
+        for candidate in root.descendants(control_type=control_type):
+            try:
+                rect = candidate.rectangle()
+                if (
+                    candidate.is_visible()
+                    and candidate.is_enabled()
+                    and rect.width() > 0
+                    and rect.height() > 0
+                ):
+                    return candidate
+            except Exception:
+                continue
+
     window.print_control_identifiers()
-    raise ElementNotFoundError("Could not find Notepad editor (Document/Edit).")
+    raise ElementNotFoundError(
+        "Could not find a visible Notepad editor (Document/Edit) for the active tab."
+    )
 
 
 def set_text(editor, text: str) -> None:
@@ -124,15 +161,29 @@ def wait_for_saved_text(path: Path, expected: str, timeout: float = 5) -> None:
     raise AssertionError(f"Saved file did not contain expected text. Actual: {actual!r}")
 
 
+def close_test_tab(window, file_name: str) -> None:
+    """Close only the test tab, not the whole Notepad window/session."""
+    activate_file_tab(window, file_name, timeout=3)
+    editor = find_editor(window)
+    editor.set_focus()
+    editor.type_keys("^w")
+    time.sleep(0.25)
+
+
 def test_can_type_read_and_save_text(notepad):
     window, temp_path = notepad
+
+    activate_file_tab(window, temp_path.name, timeout=3)
     editor = find_editor(window)
 
     set_text(editor, TEXT)
     time.sleep(0.3)
     assert TEXT in read_text(editor)
 
-    # Exercise a real desktop shortcut and verify the side effect on disk.
+    # Exercise a real desktop shortcut and verify its side effect on disk.
     editor.set_focus()
     editor.type_keys("^s")
     wait_for_saved_text(temp_path, TEXT)
+
+    # The file is saved, so Ctrl+W can close just this tab without a save prompt.
+    close_test_tab(window, temp_path.name)
