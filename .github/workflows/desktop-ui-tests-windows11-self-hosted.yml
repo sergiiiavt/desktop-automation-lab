@@ -57,6 +57,46 @@ jobs:
           }
           Get-Content desktop-environment.txt
 
+      # Fresh GitHub Windows 11 ARM images can start with the system privacy
+      # first-run screen on top of the desktop. It steals keyboard focus from
+      # Notepad, so dismiss it before any GUI automation begins. On machines
+      # where it is not present this step is simply a no-op.
+      - name: Dismiss Windows privacy first-run screen
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName UIAutomationClient
+          Add-Type -AssemblyName UIAutomationTypes
+
+          $root = [System.Windows.Automation.AutomationElement]::RootElement
+          $nameCondition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::NameProperty,
+            "Accept"
+          )
+          $typeCondition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Button
+          )
+          $condition = [System.Windows.Automation.AndCondition]::new(
+            $nameCondition,
+            $typeCondition
+          )
+
+          $accept = $root.FindFirst(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            $condition
+          )
+
+          if ($null -ne $accept) {
+            Write-Host "Windows privacy screen detected; invoking Accept."
+            $invoke = $accept.GetCurrentPattern(
+              [System.Windows.Automation.InvokePattern]::Pattern
+            )
+            $invoke.Invoke()
+            Start-Sleep -Seconds 3
+          } else {
+            Write-Host "Windows privacy screen not present."
+          }
+
       - name: Clean previous results
         shell: pwsh
         run: |
@@ -82,11 +122,15 @@ jobs:
             Copy-Item "$source\*" $target -Recurse -Force
           }
 
+      # Keep running the Python suite even when FlaUI reports a failure so one
+      # framework cannot hide the result of the other.
       - name: Install Python dependencies
+        if: always()
         shell: pwsh
         run: python -m pip install -r python/requirements.txt
 
       - name: Run ALL pywinauto tests
+        if: always()
         shell: pwsh
         run: >-
           python -m pytest python/tests -vv
@@ -121,3 +165,4 @@ jobs:
             flaui/TestResults-Windows11
             pywinauto-windows11.xml
           if-no-files-found: warn
+          retention-days: 7
