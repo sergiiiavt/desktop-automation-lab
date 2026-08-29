@@ -27,9 +27,8 @@ def notepad():
     window = find_window_for_file(desktop, temp_path.name, timeout=15)
     window.wait("visible enabled", timeout=10)
 
-    # Modern Notepad may reuse one window for several tabs. The window can be the
-    # right one while the first Document in its UIA tree belongs to another tab.
-    # Explicitly activate the tab that contains our unique temp file first.
+    # Modern Notepad may reuse one window for several tabs. Select the exact
+    # temp-file tab through the Tab control's Selection pattern, not a raw click.
     activate_file_tab(window, temp_path.name, timeout=5)
 
     yield window, temp_path
@@ -61,30 +60,64 @@ def find_window_for_file(desktop, file_name: str, timeout: float):
 
 
 def activate_file_tab(window, file_name: str, timeout: float) -> None:
-    """Activate the Notepad tab that belongs to the test temp file."""
+    """Select the exact Notepad tab and verify that it became selected."""
     deadline = time.time() + timeout
     expected_names = {file_name.lower(), Path(file_name).stem.lower()}
     last_tabs = []
 
     while time.time() < deadline:
-        last_tabs = []
         root = window.wrapper_object()
+        last_tabs = []
 
-        for tab in root.descendants(control_type="TabItem"):
+        # pywinauto's UIA TabControlWrapper exposes select(item) and
+        # get_selected_tab(). This is more deterministic than click_input() on a
+        # TabItem when modern Notepad keeps multiple tab contents in the UIA tree.
+        for tab_control in root.descendants(control_type="Tab"):
             try:
-                title = tab.window_text()
-                last_tabs.append(title)
-                title_lower = title.lower()
+                texts = tab_control.texts()
+                last_tabs.extend(texts)
 
-                if any(expected in title_lower for expected in expected_names):
-                    tab.click_input()
-                    time.sleep(0.25)
+                matching_index = next(
+                    (
+                        index
+                        for index, title in enumerate(texts)
+                        if any(expected in title.lower() for expected in expected_names)
+                    ),
+                    None,
+                )
+
+                if matching_index is None:
+                    continue
+
+                tab_control.select(matching_index)
+                time.sleep(0.25)
+
+                selected_index = tab_control.get_selected_tab()
+                if selected_index == matching_index:
                     return
             except Exception:
                 continue
 
-        # On classic Notepad there is no tab strip. If the window title itself is
-        # already the unique file, there is nothing to activate.
+        # Fallback for builds where the tab strip is not exposed as a Tab control.
+        for tab in root.descendants(control_type="TabItem"):
+            try:
+                title = tab.window_text()
+                last_tabs.append(title)
+                if any(expected in title.lower() for expected in expected_names):
+                    tab.click_input()
+                    time.sleep(0.25)
+
+                    # Verify selection if SelectionItem is exposed.
+                    try:
+                        if tab.iface_selection_item.CurrentIsSelected:
+                            return
+                    except Exception:
+                        # Some Notepad builds don't expose SelectionItem here.
+                        return
+            except Exception:
+                continue
+
+        # Classic Notepad has no tab strip.
         try:
             window_title = root.window_text().lower()
             if any(expected in window_title for expected in expected_names):
@@ -96,13 +129,14 @@ def activate_file_tab(window, file_name: str, timeout: float) -> None:
 
     raise RuntimeError(
         f"Could not activate Notepad tab for '{file_name}'. "
-        f"TabItems seen: {last_tabs}"
+        f"Tabs seen: {last_tabs}"
     )
 
 
 def find_editor(window):
-    """Return only the visible editor of the currently active Notepad tab."""
+    """Return the visible editor of the currently selected Notepad tab."""
     root = window.wrapper_object()
+    candidates = []
 
     for control_type in ("Document", "Edit"):
         for candidate in root.descendants(control_type=control_type):
@@ -114,9 +148,17 @@ def find_editor(window):
                     and rect.width() > 0
                     and rect.height() > 0
                 ):
-                    return candidate
+                    candidates.append(candidate)
             except Exception:
                 continue
+
+        if candidates:
+            # If Notepad exposes more than one editor, the selected tab's editor is
+            # the one occupying the largest visible content rectangle.
+            return max(
+                candidates,
+                key=lambda item: item.rectangle().width() * item.rectangle().height(),
+            )
 
     window.print_control_identifiers()
     raise ElementNotFoundError(
