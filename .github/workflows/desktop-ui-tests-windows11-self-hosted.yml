@@ -110,14 +110,14 @@ jobs:
         env:
           HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
         run: |
+          $ErrorActionPreference = "Stop"
+
           if (-not (Test-Path "allure-report/index.html")) {
-            Write-Warning "No generated Allure report found; skipping Hetzner publish."
-            exit 0
+            throw "No generated Allure report found."
           }
 
           if ([string]::IsNullOrWhiteSpace($env:HETZNER_SSH_KEY)) {
-            Write-Warning "GitHub secret HETZNER_SSH_KEY is not configured; skipping Hetzner publish."
-            exit 0
+            throw "GitHub secret HETZNER_SSH_KEY is not configured."
           }
 
           $hostName = "46.224.218.150"
@@ -129,15 +129,22 @@ jobs:
           $knownHosts = Join-Path $sshDir "known_hosts"
 
           New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
+          New-Item -ItemType File -Force -Path $knownHosts | Out-Null
           Set-Content -Path $keyPath -Value $env:HETZNER_SSH_KEY -NoNewline
           icacls $keyPath /inheritance:r | Out-Null
           icacls $keyPath /grant:r "$($env:USERNAME):(R)" | Out-Null
 
-          ssh-keyscan -p $sshPort $hostName | Out-File -FilePath $knownHosts -Encoding ascii
-
           tar -czf allure-report.tgz -C allure-report .
-          scp -P $sshPort -i $keyPath -o "UserKnownHostsFile=$knownHosts" -o StrictHostKeyChecking=yes `
-            allure-report.tgz "$sshUser@$hostName`:/tmp/desktop-automation-allure.tgz"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to create Allure archive." }
+
+          $sshOptions = @(
+            "-i", $keyPath,
+            "-o", "UserKnownHostsFile=$knownHosts",
+            "-o", "StrictHostKeyChecking=accept-new"
+          )
+
+          & scp -P $sshPort @sshOptions allure-report.tgz "$sshUser@$hostName`:/tmp/desktop-automation-allure.tgz"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to upload Allure report to Hetzner." }
 
           $remoteSetup = @'
           set -eu
@@ -173,11 +180,19 @@ jobs:
           systemctl daemon-reload
           systemctl enable desktop-automation-allure.service >/dev/null
           systemctl restart desktop-automation-allure.service
+
+          if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
+            ufw allow 8089/tcp >/dev/null
+          fi
+
+          sleep 1
+          systemctl is-active --quiet desktop-automation-allure.service
+          curl --fail --silent --show-error http://127.0.0.1:8089/ >/dev/null
           systemctl --no-pager --full status desktop-automation-allure.service | head -n 20
           '@
 
-          $remoteSetup | ssh -p $sshPort -i $keyPath -o "UserKnownHostsFile=$knownHosts" -o StrictHostKeyChecking=yes `
-            "$sshUser@$hostName" "bash -s"
+          $remoteSetup | & ssh -p $sshPort @sshOptions "$sshUser@$hostName" "bash -s"
+          if ($LASTEXITCODE -ne 0) { throw "Hetzner remote setup failed." }
 
           Remove-Item $keyPath, allure-report.tgz -Force -ErrorAction SilentlyContinue
           Write-Host "Allure report published to http://$hostName`:$webPort"
