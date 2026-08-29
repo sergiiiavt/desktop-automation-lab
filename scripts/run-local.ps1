@@ -22,8 +22,9 @@ if ($notepadPackage) {
 Write-Host "============================================"
 
 Remove-Item -Recurse -Force allure-results, allure-report, test-artifacts -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path allure-results/flaui, allure-results/python | Out-Null
 
-Write-Host "Running FULL FlaUI suite (Baseline + ModernNotepad)..."
+Write-Host "Running FULL portable FlaUI suite..."
 dotnet test flaui/Notepad.Tests/Notepad.Tests.csproj --configuration Debug
 
 Write-Host "Running pywinauto suite with Allure results..."
