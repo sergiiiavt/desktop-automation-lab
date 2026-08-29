@@ -132,8 +132,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
           New-Item -ItemType File -Force -Path $knownHosts | Out-Null
 
-          # Normalize a multiline GitHub secret for Windows OpenSSH.
-          # This also supports a secret accidentally pasted with literal \n sequences.
           $keyText = $env:HETZNER_SSH_KEY.Trim()
           $keyText = $keyText.Replace('\n', "`n").Replace("`r", "")
 
@@ -153,7 +151,6 @@ jobs:
           icacls $keyPath /inheritance:r | Out-Null
           icacls $keyPath /grant:r "$($env:USERNAME):(R)" | Out-Null
 
-          # Validate the private key before attempting network operations.
           & ssh-keygen -y -f $keyPath | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "HETZNER_SSH_KEY is not a valid readable OpenSSH private key." }
 
@@ -212,11 +209,23 @@ jobs:
           systemctl is-active --quiet desktop-automation-allure.service
           curl --fail --silent --show-error http://127.0.0.1:8089/ >/dev/null
           systemctl --no-pager --full status desktop-automation-allure.service || true
+
+          echo '=== LISTENING PORTS ==='
+          ss -ltnp || true
+          echo '=== UFW ==='
+          if command -v ufw >/dev/null 2>&1; then ufw status verbose || true; else echo 'ufw: not installed'; fi
+          echo '=== IPTABLES INPUT ==='
+          if command -v iptables >/dev/null 2>&1; then iptables -S INPUT || true; else echo 'iptables: not installed'; fi
+          echo '=== NFTABLES ==='
+          if command -v nft >/dev/null 2>&1; then nft list ruleset || true; else echo 'nft: not installed'; fi
+          echo '=== REVERSE PROXIES ==='
+          for svc in nginx apache2 caddy traefik; do
+            if systemctl list-unit-files "$svc.service" >/dev/null 2>&1; then
+              echo "$svc: $(systemctl is-active "$svc" 2>/dev/null || true)"
+            fi
+          done
           '@
 
-          # Never pipe a here-string directly from PowerShell to bash: the
-          # PowerShell pipeline can reintroduce CRLF. Write a real LF-only
-          # script, upload it, then execute that file on Linux.
           $remoteSetupLf = $remoteSetup.Replace("`r", "")
           [System.IO.File]::WriteAllText(
             $remoteScriptPath,
