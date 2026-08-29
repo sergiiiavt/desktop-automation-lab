@@ -1,39 +1,68 @@
-name: Desktop UI full validation - Windows 11 self-hosted
+name: Desktop UI tests - Windows 11
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
-  full-windows11:
-    name: Full desktop suite on real Windows 11
+  desktop-tests:
+    name: All desktop tests + screenshots + Allure
     runs-on: [self-hosted, Windows, desktop-ui]
-    timeout-minutes: 15
+    timeout-minutes: 20
+
     env:
-      DESKTOP_TEST_ENVIRONMENT: self-hosted-windows11
+      DESKTOP_TEST_ENVIRONMENT: remote-windows11
+      DESKTOP_TEST_ARTIFACTS_DIR: ${{ github.workspace }}\test-artifacts
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: python/requirements.txt
+
+      - name: Setup Node for Allure
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Environment report
         shell: pwsh
         run: |
-          "Runner: self-hosted Windows" | Out-File desktop-environment.txt
+          "Runner: remote Windows 11" | Out-File desktop-environment.txt
           "Computer: $env:COMPUTERNAME" | Add-Content desktop-environment.txt
           "OS: $([System.Environment]::OSVersion.VersionString)" | Add-Content desktop-environment.txt
-          "Interactive user: $env:USERNAME" | Add-Content desktop-environment.txt
+          "User: $env:USERNAME" | Add-Content desktop-environment.txt
           "dotnet: $(dotnet --version)" | Add-Content desktop-environment.txt
           "python: $(python --version)" | Add-Content desktop-environment.txt
-          $notepad = Get-Process Notepad -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($notepad) {
-            "Existing Notepad PID: $($notepad.Id)" | Add-Content desktop-environment.txt
+          $notepadPackage = Get-AppxPackage Microsoft.WindowsNotepad -ErrorAction SilentlyContinue
+          if ($notepadPackage) {
+            "Modern Notepad: $($notepadPackage.Version)" | Add-Content desktop-environment.txt
           }
           Get-Content desktop-environment.txt
 
-      - name: Run full FlaUI suite including modern Notepad tests
+      - name: Clean previous results
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force test-artifacts, allure-results, flaui-allure-results, allure-report, flaui/TestResults-Windows11 -ErrorAction SilentlyContinue
+          Remove-Item pywinauto-windows11.xml -Force -ErrorAction SilentlyContinue
+
+      - name: Run ALL FlaUI tests
         shell: pwsh
         run: >-
           dotnet test flaui/Notepad.Tests/Notepad.Tests.csproj
@@ -41,21 +70,53 @@ jobs:
           --logger "trx;LogFileName=flaui-windows11.trx"
           --results-directory flaui/TestResults-Windows11
 
+      - name: Collect FlaUI Allure results
+        if: always()
+        shell: pwsh
+        run: |
+          $source = "flaui/Notepad.Tests/bin/Release/net8.0-windows/allure-results/flaui"
+          $target = "flaui-allure-results"
+          New-Item -ItemType Directory -Force -Path $target | Out-Null
+          if (Test-Path $source) {
+            Copy-Item "$source\*" $target -Recurse -Force
+          }
+
       - name: Install Python dependencies
         shell: pwsh
         run: python -m pip install -r python/requirements.txt
 
-      - name: Run pywinauto suite
+      - name: Run ALL pywinauto tests
         shell: pwsh
-        run: python -m pytest python/tests -vv --junitxml=pywinauto-windows11.xml
+        run: >-
+          python -m pytest python/tests -vv
+          --junitxml=pywinauto-windows11.xml
+          --alluredir=allure-results
+          --clean-alluredir
 
-      - name: Upload full Windows 11 results
+      - name: Merge FlaUI results into Allure
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path allure-results | Out-Null
+          if (Test-Path flaui-allure-results) {
+            Copy-Item "flaui-allure-results\*" allure-results -Recurse -Force
+          }
+
+      - name: Generate Allure report
+        if: always()
+        shell: pwsh
+        run: npx -y allure@3.16.0 generate allure-results --config ./allurerc.mjs
+
+      - name: Upload report and screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows11-self-hosted-results
+          name: desktop-ui-test-report
           path: |
+            allure-report
+            allure-results
+            test-artifacts
             desktop-environment.txt
             flaui/TestResults-Windows11
             pywinauto-windows11.xml
-          if-no-files-found: ignore
+          if-no-files-found: warn
