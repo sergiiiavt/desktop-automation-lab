@@ -57,65 +57,38 @@ jobs:
           }
           Get-Content desktop-environment.txt
 
-      # Fresh GitHub Windows 11 images can show the Windows privacy wizard over
-      # the first desktop app. Drive only the wizard's own buttons through UIA.
-      # Do not send blind Enter presses: after the wizard closes they can open
-      # Windows Search and steal focus from the actual desktop tests.
-      - name: Initialize desktop and dismiss Windows privacy wizard
+      # GitHub's fresh Windows 11 image can launch the OS privacy first-run
+      # experience over the first desktop application. Disable that experience
+      # using the official Windows OOBE policy instead of trying to click it.
+      - name: Disable Windows privacy first-run experience
         shell: pwsh
         run: |
-          Add-Type -AssemblyName UIAutomationClient
-          Add-Type -AssemblyName UIAutomationTypes
-          Add-Type -AssemblyName System.Windows.Forms
-
-          Start-Process notepad.exe
-          Start-Sleep -Seconds 3
-
-          $root = [System.Windows.Automation.AutomationElement]::RootElement
-          $buttonType = [System.Windows.Automation.ControlType]::Button
-          $buttonCondition = [System.Windows.Automation.PropertyCondition]::new(
-            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-            $buttonType
+          $policyPaths = @(
+            "HKCU:\Software\Policies\Microsoft\Windows\OOBE",
+            "HKLM:\Software\Policies\Microsoft\Windows\OOBE"
           )
-          $targetNames = @("Next", "Accept", "Continue", "Done")
 
-          1..12 | ForEach-Object {
-            $buttons = $root.FindAll(
-              [System.Windows.Automation.TreeScope]::Descendants,
-              $buttonCondition
-            )
-
-            $target = $null
-            foreach ($button in $buttons) {
-              if ($targetNames -contains $button.Current.Name) {
-                $target = $button
-                break
-              }
-            }
-
-            if ($null -eq $target) {
-              return
-            }
-
-            Write-Host "Privacy wizard: invoking '$($target.Current.Name)'"
+          foreach ($path in $policyPaths) {
             try {
-              $invoke = $target.GetCurrentPattern(
-                [System.Windows.Automation.InvokePattern]::Pattern
-              )
-              $invoke.Invoke()
+              New-Item -Path $path -Force | Out-Null
+              New-ItemProperty `
+                -Path $path `
+                -Name DisablePrivacyExperience `
+                -PropertyType DWord `
+                -Value 1 `
+                -Force | Out-Null
+              Write-Host "Set DisablePrivacyExperience=1 at $path"
             } catch {
-              Write-Host "Could not invoke privacy button: $($_.Exception.Message)"
-              return
+              Write-Warning "Could not set $path : $($_.Exception.Message)"
             }
-
-            Start-Sleep -Seconds 1
           }
 
-          # Close any transient shell overlay defensively, then remove only the
-          # disposable Notepad instance used to initialize the desktop.
-          [System.Windows.Forms.SendKeys]::SendWait("{ESC}")
-          Start-Sleep -Milliseconds 500
-          Get-Process Notepad -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          # Trigger one disposable GUI launch now so any remaining first-run
+          # initialization happens before the actual tests.
+          Start-Process notepad.exe
+          Start-Sleep -Seconds 4
+          Get-Process Notepad -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 1
 
       - name: Clean previous results
