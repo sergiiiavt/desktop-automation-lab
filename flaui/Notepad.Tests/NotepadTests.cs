@@ -64,6 +64,7 @@ public class NotepadTests
         _window = windowResult.Result;
         _notepadProcessId = _window.Properties.ProcessId.Value;
         WriteEnvironmentDiagnostics();
+        CaptureWindow("00-opened");
     }
 
     [TearDown]
@@ -73,6 +74,9 @@ public class NotepadTests
 
         try
         {
+            // Keep a final visual state even when an assertion failed.
+            CaptureWindow("99-final");
+
             if (_window is not null)
             {
                 // Modern Notepad is multi-tab. Close only the tab created by this test,
@@ -124,10 +128,12 @@ public class NotepadTests
 
         var editor = FindEditor(_window!);
         ReplaceTextWithClipboard(editor, expected);
+        CaptureWindow("01-text-entered");
 
         Assert.That(editor.Text, Does.Contain(expected));
 
         SaveWithKeyboard();
+        CaptureWindow("02-saved");
 
         Assert.That(File.ReadAllText(_tempFilePath!), Does.Contain(expected));
     }
@@ -143,14 +149,17 @@ public class NotepadTests
 
         ReplaceTextWithClipboard(editor, initialText);
         SaveWithKeyboard();
+        CaptureWindow("01-initial-saved");
         Assert.That(File.ReadAllText(_tempFilePath!), Does.Contain(initialText));
 
         ReplaceTextWithClipboard(editor, replacementText);
+        CaptureWindow("02-text-replaced");
 
         Assert.That(editor.Text, Does.Contain(replacementText));
         Assert.That(editor.Text, Does.Not.Contain(initialText));
 
         SaveWithKeyboard();
+        CaptureWindow("03-replacement-saved");
 
         var savedText = File.ReadAllText(_tempFilePath!);
         Assert.That(savedText, Does.Contain(replacementText));
@@ -170,6 +179,7 @@ public class NotepadTests
 
         var editor = FindEditor(_window!);
         ReplaceTextWithClipboard(editor, text);
+        CaptureWindow("01-text-entered");
 
         // User flow: select all -> H1 -> Bold -> Save.
         editor.Focus();
@@ -183,8 +193,10 @@ public class NotepadTests
 
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_B);
         Thread.Sleep(500);
+        CaptureWindow("02-h1-bold-applied");
 
         SaveWithKeyboard();
+        CaptureWindow("03-markdown-saved");
 
         var savedText = File.ReadAllText(_tempFilePath!);
         var diagnostic = BuildFormattingDiagnostic(_window!);
@@ -192,6 +204,46 @@ public class NotepadTests
         Assert.That(savedText, Does.Contain(text), diagnostic);
         Assert.That(savedText.TrimStart(), Does.StartWith("# "), diagnostic);
         Assert.That(savedText, Does.Contain($"**{text}**"), diagnostic);
+    }
+
+    private void CaptureWindow(string step)
+    {
+        if (_window is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var configuredRoot = Environment.GetEnvironmentVariable("DESKTOP_TEST_ARTIFACTS_DIR");
+            var artifactsRoot = string.IsNullOrWhiteSpace(configuredRoot)
+                ? Path.Combine(Directory.GetCurrentDirectory(), "flaui", "TestArtifacts")
+                : Path.GetFullPath(configuredRoot);
+
+            var testName = SanitizeFileName(TestContext.CurrentContext.Test.Name);
+            var testDirectory = Path.Combine(artifactsRoot, testName);
+            Directory.CreateDirectory(testDirectory);
+
+            var fileName = $"{DateTime.UtcNow:HHmmssfff}-{SanitizeFileName(step)}.png";
+            var screenshotPath = Path.Combine(testDirectory, fileName);
+
+            // Capture the application window rather than the entire desktop. It is
+            // more useful in a test report and avoids recording unrelated applications.
+            _window.CaptureToFile(screenshotPath);
+            TestContext.AddTestAttachment(screenshotPath, $"Notepad: {step}");
+            TestContext.Progress.WriteLine($"Screenshot: {screenshotPath}");
+        }
+        catch (Exception ex)
+        {
+            // Reporting must never change the functional test result.
+            TestContext.Progress.WriteLine($"Screenshot warning: {ex.Message}");
+        }
+    }
+
+    private static string SanitizeFileName(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        return new string(value.Select(ch => invalid.Contains(ch) ? '_' : ch).ToArray());
     }
 
     private static void ReplaceTextWithClipboard(FlaUITextBox editor, string text)
