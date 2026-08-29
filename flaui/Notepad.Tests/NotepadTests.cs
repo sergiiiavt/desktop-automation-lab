@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
+using FlaUI.Core.Input;
 using FlaUI.Core.Tools;
+using FlaUI.Core.WindowsAPI;
 using FlaUI.UIA3;
 using NUnit.Framework;
 
@@ -14,23 +16,32 @@ public class NotepadTests
     private UIA3Automation? _automation;
     private Window? _window;
     private int? _notepadProcessId;
+    private string? _tempFilePath;
 
     [SetUp]
     public void SetUp()
     {
         _automation = new UIA3Automation();
 
-        // Windows 11 Notepad may be launched through a short-lived stub process.
-        // Do not trust the PID returned by Process.Start(). Instead, launch the app
-        // and discover its real top-level window directly in the UI Automation tree.
+        // Give this test run its own real file. This makes the target Notepad window
+        // identifiable even on modern Windows 11, where notepad.exe may only be a
+        // short-lived launcher and Notepad may restore previous tabs/sessions.
+        _tempFilePath = Path.Combine(
+            Path.GetTempPath(),
+            $"desktop-automation-{Guid.NewGuid():N}.txt");
+        File.WriteAllText(_tempFilePath, string.Empty);
+
         Process.Start(new ProcessStartInfo
         {
             FileName = "notepad.exe",
+            Arguments = $"\"{_tempFilePath}\"",
             UseShellExecute = true
         })?.Dispose();
 
+        var expectedFileName = Path.GetFileName(_tempFilePath);
+
         var windowResult = Retry.WhileNull(
-            () => FindNotepadWindow(_automation),
+            () => FindNotepadWindow(_automation, expectedFileName),
             timeout: TimeSpan.FromSeconds(15),
             interval: TimeSpan.FromMilliseconds(250),
             ignoreException: true);
@@ -38,8 +49,7 @@ public class NotepadTests
         if (!windowResult.Success || windowResult.Result is null)
         {
             throw new InvalidOperationException(
-                "Could not find a Notepad top-level window through UI Automation. " +
-                "Close any existing Notepad windows and run the test again.\n\n" +
+                $"Could not find the Notepad window for '{expectedFileName}' through UI Automation.\n\n" +
                 BuildDesktopDiagnostic(_automation));
         }
 
@@ -50,15 +60,28 @@ public class NotepadTests
     [TearDown]
     public void TearDown()
     {
-        // Kill the real process discovered from the UIA window so an unsaved-document
-        // dialog cannot block teardown. The launcher process may already be gone.
+        // Prefer a normal close. The test saves the temporary file before teardown,
+        // so there should be no Save dialog and Windows 11 Notepad will not treat the
+        // test as a crashed/unsaved session to restore on the next run.
+        try
+        {
+            _window?.Close();
+            Thread.Sleep(300);
+        }
+        catch
+        {
+            // Fall through to process cleanup below.
+        }
+
         try
         {
             if (_notepadProcessId is int processId)
             {
-                var process = Process.GetProcessById(processId);
-                process.Kill(entireProcessTree: true);
-                process.Dispose();
+                using var process = Process.GetProcessById(processId);
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
             }
         }
         catch (ArgumentException)
@@ -72,6 +95,18 @@ public class NotepadTests
         finally
         {
             _automation?.Dispose();
+
+            if (_tempFilePath is not null)
+            {
+                try
+                {
+                    File.Delete(_tempFilePath);
+                }
+                catch
+                {
+                    // Best-effort cleanup only.
+                }
+            }
         }
     }
 
@@ -87,9 +122,16 @@ public class NotepadTests
         Thread.Sleep(300);
 
         Assert.That(editor.Text, Does.Contain(expected));
+
+        // Because Notepad was opened with an existing temp file, Ctrl+S saves without
+        // opening a Save As dialog. This lets teardown close Notepad cleanly.
+        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_S);
+        Thread.Sleep(500);
+
+        Assert.That(File.ReadAllText(_tempFilePath!), Does.Contain(expected));
     }
 
-    private static Window? FindNotepadWindow(UIA3Automation automation)
+    private static Window? FindNotepadWindow(UIA3Automation automation, string expectedFileName)
     {
         var desktop = automation.GetDesktop();
         var windows = desktop.FindAllChildren(cf => cf.ByControlType(ControlType.Window));
@@ -101,7 +143,13 @@ public class NotepadTests
                 var processId = element.Properties.ProcessId.Value;
                 using var process = Process.GetProcessById(processId);
 
-                if (string.Equals(process.ProcessName, "Notepad", StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(process.ProcessName, "Notepad", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var windowName = element.Name ?? string.Empty;
+                if (windowName.Contains(expectedFileName, StringComparison.OrdinalIgnoreCase))
                 {
                     return element.AsWindow();
                 }
