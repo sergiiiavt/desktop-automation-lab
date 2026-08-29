@@ -167,15 +167,14 @@ def find_editor(window):
 
 
 def set_text(editor, text: str) -> None:
-    """Prefer UI Automation ValuePattern; fall back to real keyboard input."""
+    """Enter text through real keyboard input so Notepad marks the file as dirty.
+
+    ValuePattern.SetValue can update the UIA text value without triggering the same
+    application edit/dirty-state path as user input on modern Windows 11 Notepad.
+    That makes Ctrl+S a no-op even though the text is visibly present. For this E2E
+    test we intentionally use keyboard input instead.
+    """
     editor.set_focus()
-
-    try:
-        editor.iface_value.SetValue(text)
-        return
-    except (NoPatternInterfaceError, AttributeError):
-        pass
-
     editor.type_keys("^a{BACKSPACE}")
     editor.type_keys(text, with_spaces=True, pause=0.02)
 
