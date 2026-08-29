@@ -22,13 +22,16 @@ if ($notepadPackage) {
 Write-Host "============================================"
 
 Remove-Item -Recurse -Force allure-results, allure-report, test-artifacts -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path allure-results/flaui, allure-results/python | Out-Null
+New-Item -ItemType Directory -Force -Path allure-results | Out-Null
 
 Write-Host "Running FULL portable FlaUI suite..."
 dotnet test flaui/Notepad.Tests/Notepad.Tests.csproj --configuration Debug
 
 Write-Host "Running pywinauto suite with Allure results..."
-python -m pytest python/tests -vv --alluredir=allure-results/python --clean-alluredir
+python -m pytest python/tests -vv --alluredir=allure-results
+
+$results = @(Get-ChildItem allure-results -Filter "*-result.json" -File)
+Write-Host "Allure test result files: $($results.Count)"
 
 if (-not (Get-Command npx -ErrorAction SilentlyContinue)) {
     throw "npx was not found. Install Node.js, then run this script again."
