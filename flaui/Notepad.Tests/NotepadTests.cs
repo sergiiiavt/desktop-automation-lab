@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FlaUI.Core;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
@@ -18,7 +19,32 @@ public class NotepadTests
     [SetUp]
     public void SetUp()
     {
-        _app = Application.Launch("notepad.exe");
+        // Modern Windows 11 Notepad can launch through a short-lived stub process.
+        // FlaUI must attach to the actual Notepad process that owns the visible window.
+        var existingProcessIds = Process.GetProcessesByName("Notepad")
+            .Select(process => process.Id)
+            .ToHashSet();
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "notepad.exe",
+            UseShellExecute = true
+        });
+
+        var processResult = Retry.WhileNull(
+            () => FindNewNotepadProcess(existingProcessIds),
+            timeout: TimeSpan.FromSeconds(10),
+            interval: TimeSpan.FromMilliseconds(250),
+            ignoreException: true);
+
+        if (!processResult.Success || processResult.Result is null)
+        {
+            throw new InvalidOperationException(
+                "Could not find the real Notepad process with a visible main window. " +
+                "Close any existing Notepad windows and run the test again.");
+        }
+
+        _app = Application.Attach(processResult.Result.Id);
         _automation = new UIA3Automation();
         _window = _app.GetMainWindow(_automation, TimeSpan.FromSeconds(10));
 
@@ -35,6 +61,10 @@ public class NotepadTests
             {
                 _app.Kill();
             }
+        }
+        catch (ArgumentException)
+        {
+            // The process may already have exited during teardown.
         }
         finally
         {
@@ -55,6 +85,35 @@ public class NotepadTests
         Thread.Sleep(300);
 
         Assert.That(editor.Text, Does.Contain(expected));
+    }
+
+    private static Process? FindNewNotepadProcess(HashSet<int> existingProcessIds)
+    {
+        foreach (var process in Process.GetProcessesByName("Notepad"))
+        {
+            if (existingProcessIds.Contains(process.Id))
+            {
+                process.Dispose();
+                continue;
+            }
+
+            try
+            {
+                process.Refresh();
+                if (!process.HasExited && process.MainWindowHandle != IntPtr.Zero)
+                {
+                    return process;
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // Process disappeared between enumeration and inspection.
+            }
+
+            process.Dispose();
+        }
+
+        return null;
     }
 
     private static TextBox FindEditor(Window window)
