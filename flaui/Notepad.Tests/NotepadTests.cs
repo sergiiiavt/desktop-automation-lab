@@ -60,7 +60,7 @@ public class NotepadTests
     [TearDown]
     public void TearDown()
     {
-        // Prefer a normal close. The test saves the temporary file before teardown,
+        // Prefer a normal close. Every test saves the temporary file before teardown,
         // so there should be no Save dialog and Windows 11 Notepad will not treat the
         // test as a crashed/unsaved session to restore on the next run.
         try
@@ -111,24 +111,64 @@ public class NotepadTests
     }
 
     [Test]
-    public void CanTypeAndReadText()
+    public void CanTypeAndSaveText()
     {
         const string expected = "Hello desktop automation";
 
         var editor = FindEditor(_window!);
-        editor.Focus();
-        editor.Text = expected;
-
-        Thread.Sleep(300);
+        ReplaceTextWithKeyboard(editor, expected);
 
         Assert.That(editor.Text, Does.Contain(expected));
 
-        // Because Notepad was opened with an existing temp file, Ctrl+S saves without
-        // opening a Save As dialog. This lets teardown close Notepad cleanly.
-        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_S);
-        Thread.Sleep(500);
+        SaveWithKeyboard();
 
         Assert.That(File.ReadAllText(_tempFilePath!), Does.Contain(expected));
+    }
+
+    [Test]
+    public void CanReplaceExistingTextAndSave()
+    {
+        const string initialText = "Initial desktop text";
+        const string replacementText = "Replaced by FlaUI";
+
+        var editor = FindEditor(_window!);
+
+        // First user action: enter and save initial content.
+        ReplaceTextWithKeyboard(editor, initialText);
+        SaveWithKeyboard();
+        Assert.That(File.ReadAllText(_tempFilePath!), Does.Contain(initialText));
+
+        // Second user action: Ctrl+A selects existing content, typing replaces it.
+        ReplaceTextWithKeyboard(editor, replacementText);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(editor.Text, Does.Contain(replacementText));
+            Assert.That(editor.Text, Does.Not.Contain(initialText));
+        });
+
+        SaveWithKeyboard();
+
+        var savedText = File.ReadAllText(_tempFilePath!);
+        Assert.Multiple(() =>
+        {
+            Assert.That(savedText, Does.Contain(replacementText));
+            Assert.That(savedText, Does.Not.Contain(initialText));
+        });
+    }
+
+    private static void ReplaceTextWithKeyboard(TextBox editor, string text)
+    {
+        editor.Focus();
+        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
+        Keyboard.Type(text);
+        Thread.Sleep(300);
+    }
+
+    private static void SaveWithKeyboard()
+    {
+        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_S);
+        Thread.Sleep(500);
     }
 
     private static Window? FindNotepadWindow(UIA3Automation automation, string expectedFileName)
