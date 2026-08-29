@@ -17,6 +17,7 @@ jobs:
     timeout-minutes: 10
     env:
       DESKTOP_TEST_ENVIRONMENT: github-hosted-windows
+      DESKTOP_TEST_ARTIFACTS_DIR: ${{ github.workspace }}\flaui\TestArtifacts
 
     steps:
       - name: Checkout
@@ -50,13 +51,22 @@ jobs:
           --logger "trx;LogFileName=flaui.trx"
           --results-directory flaui/TestResults
 
-      - name: Upload FlaUI baseline result
+      - name: Upload FlaUI Allure results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: flaui-github-hosted-baseline
+          name: allure-results-flaui
+          path: allure-results/flaui
+          if-no-files-found: warn
+
+      - name: Upload FlaUI debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flaui-debug-artifacts
           path: |
             flaui/TestResults
+            flaui/TestArtifacts
             flaui-environment.txt
           if-no-files-found: ignore
 
@@ -66,6 +76,7 @@ jobs:
     timeout-minutes: 10
     env:
       DESKTOP_TEST_ENVIRONMENT: github-hosted-windows
+      DESKTOP_TEST_ARTIFACTS_DIR: ${{ github.workspace }}\python\TestArtifacts
 
     steps:
       - name: Checkout
@@ -84,12 +95,54 @@ jobs:
 
       - name: Run pywinauto baseline test
         shell: pwsh
-        run: python -m pytest python/tests -vv --junitxml=pywinauto-pytest.xml
+        run: >-
+          python -m pytest python/tests -vv
+          --junitxml=pywinauto-pytest.xml
+          --alluredir=allure-results/python
+          --clean-alluredir
 
-      - name: Upload pywinauto baseline result
+      - name: Upload pywinauto Allure results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pywinauto-github-hosted-baseline
-          path: pywinauto-pytest.xml
+          name: allure-results-pywinauto
+          path: allure-results/python
+          if-no-files-found: warn
+
+      - name: Upload pywinauto debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pywinauto-debug-artifacts
+          path: |
+            pywinauto-pytest.xml
+            python/TestArtifacts
           if-no-files-found: ignore
+
+  allure-report:
+    name: Build Allure report
+    runs-on: ubuntu-latest
+    needs: [flaui, pywinauto]
+    if: always()
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Allure results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: allure-results-*
+          path: allure-results
+          merge-multiple: true
+
+      - name: Generate Allure 3 report
+        shell: bash
+        run: npx -y allure@3.16.0 generate allure-results --config ./allurerc.mjs
+
+      - name: Upload Allure report
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-report
+          path: allure-report
+          if-no-files-found: error
