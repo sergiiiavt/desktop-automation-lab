@@ -95,14 +95,92 @@ jobs:
           Get-ChildItem allure-results -File | Select-Object Name, Length
           $results = @(Get-ChildItem allure-results -Filter "*-result.json" -File)
           Write-Host "Allure test result files in shared directory: $($results.Count)"
-          if ($results.Count -ne 4) {
-            Write-Warning "Expected 4 Allure test results (3 FlaUI + 1 pywinauto), found $($results.Count)."
+          if ($results.Count -ne 5) {
+            Write-Warning "Expected 5 Allure test results (4 FlaUI + 1 pywinauto), found $($results.Count)."
           }
 
       - name: Generate Allure report
         if: always()
         shell: pwsh
         run: npx -y allure@3.16.0 generate allure-results --config ./allurerc.mjs
+
+      - name: Publish latest Allure report to Hetzner
+        if: always() && github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+        run: |
+          if (-not (Test-Path "allure-report/index.html")) {
+            Write-Warning "No generated Allure report found; skipping Hetzner publish."
+            exit 0
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:HETZNER_SSH_KEY)) {
+            Write-Warning "GitHub secret HETZNER_SSH_KEY is not configured; skipping Hetzner publish."
+            exit 0
+          }
+
+          $hostName = "46.224.218.150"
+          $sshUser = "root"
+          $sshPort = 22
+          $webPort = 8089
+          $sshDir = Join-Path $HOME ".ssh"
+          $keyPath = Join-Path $sshDir "desktop-automation-hetzner"
+          $knownHosts = Join-Path $sshDir "known_hosts"
+
+          New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
+          Set-Content -Path $keyPath -Value $env:HETZNER_SSH_KEY -NoNewline
+          icacls $keyPath /inheritance:r | Out-Null
+          icacls $keyPath /grant:r "$($env:USERNAME):(R)" | Out-Null
+
+          ssh-keyscan -p $sshPort $hostName | Out-File -FilePath $knownHosts -Encoding ascii
+
+          tar -czf allure-report.tgz -C allure-report .
+          scp -P $sshPort -i $keyPath -o "UserKnownHostsFile=$knownHosts" -o StrictHostKeyChecking=yes `
+            allure-report.tgz "$sshUser@$hostName`:/tmp/desktop-automation-allure.tgz"
+
+          $remoteSetup = @'
+          set -eu
+
+          SITE=/opt/desktop-automation-allure/site
+          SERVICE=/etc/systemd/system/desktop-automation-allure.service
+
+          mkdir -p "$SITE"
+          rm -rf "$SITE"/*
+          tar -xzf /tmp/desktop-automation-allure.tgz -C "$SITE"
+          rm -f /tmp/desktop-automation-allure.tgz
+
+          if ! command -v python3 >/dev/null 2>&1; then
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y python3
+          fi
+
+          cat > "$SERVICE" <<'EOF'
+          [Unit]
+          Description=Desktop Automation Allure Report
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/python3 -m http.server 8089 --bind 0.0.0.0 --directory /opt/desktop-automation-allure/site
+          Restart=always
+          RestartSec=2
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+          systemctl daemon-reload
+          systemctl enable desktop-automation-allure.service >/dev/null
+          systemctl restart desktop-automation-allure.service
+          systemctl --no-pager --full status desktop-automation-allure.service | head -n 20
+          '@
+
+          $remoteSetup | ssh -p $sshPort -i $keyPath -o "UserKnownHostsFile=$knownHosts" -o StrictHostKeyChecking=yes `
+            "$sshUser@$hostName" "bash -s"
+
+          Remove-Item $keyPath, allure-report.tgz -Force -ErrorAction SilentlyContinue
+          Write-Host "Allure report published to http://$hostName`:$webPort"
 
       - name: Upload report and screenshots
         if: always()
