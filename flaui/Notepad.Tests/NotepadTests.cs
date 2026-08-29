@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
 using FlaUI.Core.Input;
@@ -7,6 +6,7 @@ using FlaUI.Core.Tools;
 using FlaUI.Core.WindowsAPI;
 using FlaUI.UIA3;
 using NUnit.Framework;
+using System.Windows.Forms;
 
 namespace Notepad.Tests;
 
@@ -14,10 +14,6 @@ namespace Notepad.Tests;
 [NonParallelizable]
 public class NotepadTests
 {
-    private const uint InputKeyboard = 1;
-    private const uint KeyEventFKeyUp = 0x0002;
-    private const uint KeyEventFUnicode = 0x0004;
-
     private UIA3Automation? _automation;
     private Window? _window;
     private int? _notepadProcessId;
@@ -28,9 +24,6 @@ public class NotepadTests
     {
         _automation = new UIA3Automation();
 
-        // Give this test run its own real file. This makes the target Notepad window
-        // identifiable even on modern Windows 11, where notepad.exe may only be a
-        // short-lived launcher and Notepad may restore previous tabs/sessions.
         _tempFilePath = Path.Combine(
             Path.GetTempPath(),
             $"desktop-automation-{Guid.NewGuid():N}.txt");
@@ -60,14 +53,12 @@ public class NotepadTests
 
         _window = windowResult.Result;
         _notepadProcessId = _window.Properties.ProcessId.Value;
+        WriteEnvironmentDiagnostics();
     }
 
     [TearDown]
     public void TearDown()
     {
-        // Prefer a normal close. Every test saves the temporary file before teardown,
-        // so there should be no Save dialog and Windows 11 Notepad will not treat the
-        // test as a crashed/unsaved session to restore on the next run.
         try
         {
             _window?.Close();
@@ -116,12 +107,13 @@ public class NotepadTests
     }
 
     [Test]
+    [Category("Baseline")]
     public void CanTypeAndSaveText()
     {
         const string expected = "Hello desktop automation";
 
         var editor = FindEditor(_window!);
-        ReplaceTextWithKeyboard(editor, expected);
+        ReplaceTextWithClipboard(editor, expected);
 
         Assert.That(editor.Text, Does.Contain(expected));
 
@@ -131,6 +123,7 @@ public class NotepadTests
     }
 
     [Test]
+    [Category("Baseline")]
     public void CanReplaceExistingTextAndSave()
     {
         const string initialText = "Initial desktop text";
@@ -138,11 +131,11 @@ public class NotepadTests
 
         var editor = FindEditor(_window!);
 
-        ReplaceTextWithKeyboard(editor, initialText);
+        ReplaceTextWithClipboard(editor, initialText);
         SaveWithKeyboard();
         Assert.That(File.ReadAllText(_tempFilePath!), Does.Contain(initialText));
 
-        ReplaceTextWithKeyboard(editor, replacementText);
+        ReplaceTextWithClipboard(editor, replacementText);
 
         Assert.That(editor.Text, Does.Contain(replacementText));
         Assert.That(editor.Text, Does.Not.Contain(initialText));
@@ -155,18 +148,20 @@ public class NotepadTests
     }
 
     [Test]
-    [Category("Formatting")]
+    [Category("ModernNotepad")]
     public void CanFormatSelectedTextAsHeading1AndBold()
     {
         const string text = "Formatted desktop heading";
 
         if (!HasModernFormattingUi(_window!))
         {
-            Assert.Ignore("This Notepad build does not expose the modern formatting UI.");
+            Assert.Ignore(
+                "Modern Notepad formatting UI was not detected in this environment. " +
+                "A GitHub-hosted baseline result does not validate Windows 11 formatting behavior.");
         }
 
         var editor = FindEditor(_window!);
-        ReplaceTextWithKeyboard(editor, text);
+        ReplaceTextWithClipboard(editor, text);
 
         editor.Focus();
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
@@ -188,64 +183,91 @@ public class NotepadTests
         Assert.That(savedText, Does.Contain($"**{text}**"));
     }
 
-    private static void ReplaceTextWithKeyboard(TextBox editor, string text)
+    private static void ReplaceTextWithClipboard(TextBox editor, string text)
     {
         editor.Focus();
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
 
-        // FlaUI Keyboard.Type(string) internally uses VkKeyScan, which depends on
-        // the active Windows keyboard layout. Send Unicode input directly so the
-        // same test types the same text under EN, UA and other layouts.
-        TypeUnicodeText(text);
+        // Pasting is deliberate here. FlaUI Keyboard.Type(string) uses VkKeyScan and
+        // therefore depends on the active keyboard layout. Clipboard + Ctrl+V keeps
+        // the same user-visible input on EN, UA and CI runner layouts.
+        SetClipboardTextSta(text);
+        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_V);
         Thread.Sleep(300);
     }
 
-    private static void TypeUnicodeText(string text)
+    private static void SetClipboardTextSta(string text)
     {
-        foreach (var character in text)
+        Exception? clipboardError = null;
+
+        var thread = new Thread(() =>
         {
-            var inputs = new[]
+            try
             {
-                CreateUnicodeInput(character, keyUp: false),
-                CreateUnicodeInput(character, keyUp: true)
-            };
-
-            var sent = SendInput(
-                (uint)inputs.Length,
-                inputs,
-                Marshal.SizeOf<NativeInput>());
-
-            if (sent != inputs.Length)
-            {
-                throw new InvalidOperationException(
-                    $"SendInput failed while typing Unicode text. Win32 error: {Marshal.GetLastWin32Error()}");
+                Clipboard.SetText(text);
             }
+            catch (Exception ex)
+            {
+                clipboardError = ex;
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+
+        if (clipboardError is not null)
+        {
+            throw new InvalidOperationException("Could not set Windows clipboard for desktop test input.", clipboardError);
         }
-    }
-
-    private static NativeInput CreateUnicodeInput(char character, bool keyUp)
-    {
-        return new NativeInput
-        {
-            Type = InputKeyboard,
-            Union = new InputUnion
-            {
-                Keyboard = new NativeKeyboardInput
-                {
-                    VirtualKey = 0,
-                    ScanCode = character,
-                    Flags = KeyEventFUnicode | (keyUp ? KeyEventFKeyUp : 0),
-                    Time = 0,
-                    ExtraInfo = UIntPtr.Zero
-                }
-            }
-        };
     }
 
     private static void SaveWithKeyboard()
     {
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_S);
         Thread.Sleep(500);
+    }
+
+    private void WriteEnvironmentDiagnostics()
+    {
+        var executionEnvironment =
+            Environment.GetEnvironmentVariable("DESKTOP_TEST_ENVIRONMENT") ?? "local-or-unspecified";
+
+        TestContext.Progress.WriteLine("=== Desktop test environment ===");
+        TestContext.Progress.WriteLine($"Execution: {executionEnvironment}");
+        TestContext.Progress.WriteLine($"OS: {Environment.OSVersion}");
+        TestContext.Progress.WriteLine($"64-bit OS: {Environment.Is64BitOperatingSystem}");
+
+        try
+        {
+            TestContext.Progress.WriteLine(
+                $"Keyboard layout: {InputLanguage.CurrentInputLanguage.Culture.Name}");
+        }
+        catch (Exception ex)
+        {
+            TestContext.Progress.WriteLine($"Keyboard layout: unavailable ({ex.Message})");
+        }
+
+        try
+        {
+            if (_notepadProcessId is int processId)
+            {
+                using var process = Process.GetProcessById(processId);
+                var version = process.MainModule?.FileVersionInfo.FileVersion ?? "unknown";
+                var path = process.MainModule?.FileName ?? "unknown";
+                TestContext.Progress.WriteLine($"Notepad PID: {processId}");
+                TestContext.Progress.WriteLine($"Notepad version: {version}");
+                TestContext.Progress.WriteLine($"Notepad path: {path}");
+            }
+        }
+        catch (Exception ex)
+        {
+            TestContext.Progress.WriteLine($"Notepad version/path: unavailable ({ex.Message})");
+        }
+
+        TestContext.Progress.WriteLine(
+            $"Modern formatting UI detected: {HasModernFormattingUi(_window!)}");
+        TestContext.Progress.WriteLine("================================");
     }
 
     private static bool HasModernFormattingUi(Window window)
@@ -359,35 +381,5 @@ public class NotepadTests
         }
 
         return result.Result.AsTextBox();
-    }
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern uint SendInput(
-        uint numberOfInputs,
-        NativeInput[] inputs,
-        int sizeOfInputStructure);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NativeInput
-    {
-        public uint Type;
-        public InputUnion Union;
-    }
-
-    [StructLayout(LayoutKind.Explicit)]
-    private struct InputUnion
-    {
-        [FieldOffset(0)]
-        public NativeKeyboardInput Keyboard;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NativeKeyboardInput
-    {
-        public ushort VirtualKey;
-        public ushort ScanCode;
-        public uint Flags;
-        public uint Time;
-        public UIntPtr ExtraInfo;
     }
 }
