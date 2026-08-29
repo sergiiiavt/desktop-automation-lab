@@ -157,6 +157,43 @@ public class NotepadTests
         });
     }
 
+    [Test]
+    [Category("Formatting")]
+    public void CanFormatSelectedTextAsHeading1AndBold()
+    {
+        const string text = "Formatted desktop heading";
+
+        if (!HasModernFormattingUi(_window!))
+        {
+            Assert.Ignore("This Notepad build does not expose the modern formatting UI.");
+        }
+
+        var editor = FindEditor(_window!);
+        ReplaceTextWithKeyboard(editor, text);
+
+        // Select all content, apply Heading 1, then bold.
+        editor.Focus();
+        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
+        Keyboard.TypeSimultaneously(
+            VirtualKeyShort.CONTROL,
+            VirtualKeyShort.MENU,
+            VirtualKeyShort.KEY_1);
+        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_B);
+        Thread.Sleep(500);
+
+        SaveWithKeyboard();
+
+        var savedText = File.ReadAllText(_tempFilePath!);
+
+        // Modern Notepad formatting is stored as Markdown. H1 contributes '# ',
+        // and bold contributes '**' around the selected text.
+        Assert.Multiple(() =>
+        {
+            Assert.That(savedText.TrimStart(), Does.StartWith("# "));
+            Assert.That(savedText, Does.Contain($"**{text}**"));
+        });
+    }
+
     private static void ReplaceTextWithKeyboard(TextBox editor, string text)
     {
         editor.Focus();
@@ -169,6 +206,32 @@ public class NotepadTests
     {
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_S);
         Thread.Sleep(500);
+    }
+
+    private static bool HasModernFormattingUi(Window window)
+    {
+        // The GitHub-hosted Windows runner can have an older Notepad build. Keep the
+        // formatting test local/feature-aware instead of failing the whole CI suite.
+        var formattingNames = new[]
+        {
+            "H1",
+            "Bold",
+            "Жирний",
+            "Напівжирний",
+            "Назва"
+        };
+
+        try
+        {
+            return window.FindAllDescendants()
+                .Any(element =>
+                    formattingNames.Any(name =>
+                        string.Equals(element.Name, name, StringComparison.OrdinalIgnoreCase)));
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static Window? FindNotepadWindow(UIA3Automation automation, string expectedFileName)
