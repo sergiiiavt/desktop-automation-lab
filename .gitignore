@@ -12,6 +12,14 @@ __pycache__/
 venv/
 *.xml
 
+# Generated test/report artifacts
+allure-results/
+allure-report/
+test-artifacts/
+python/TestArtifacts/
+flaui/TestArtifacts/
+*.tgz
+
 # IDE
 .vs/
 .vscode/

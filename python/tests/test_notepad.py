@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import allure
+import pyperclip
 import pytest
 from pywinauto import Desktop
 from pywinauto.findwindows import ElementNotFoundError
@@ -14,36 +15,45 @@ TEXT = "Hello desktop automation"
 
 
 @pytest.fixture
-def notepad():
-    """Open a unique temp file and discover its real Windows 11 Notepad window."""
-    with tempfile.NamedTemporaryFile(
-        prefix="desktop-automation-",
-        suffix=".txt",
-        delete=False,
-    ) as temp_file:
-        temp_path = Path(temp_file.name)
+def notepad(request):
+    """Open a unique temp file and always close only its Notepad tab."""
+    window = None
+    temp_path = None
 
-    subprocess.Popen(["notepad.exe", str(temp_path)])
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="desktop-automation-",
+            suffix=".txt",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
 
-    desktop = Desktop(backend="uia")
-    window = find_window_for_file(desktop, temp_path.name, timeout=15)
-    window.wait("visible enabled", timeout=10)
+        subprocess.Popen(["notepad.exe", str(temp_path)])
 
-    # Modern Notepad may reuse one window for several tabs. Select the exact
-    # temp-file tab through the Tab control's Selection pattern, not a raw click.
-    activate_file_tab(window, temp_path.name, timeout=5)
+        desktop = Desktop(backend="uia")
+        window = find_window_for_file(desktop, temp_path.name, timeout=15)
+        window.wait("visible enabled", timeout=10)
+        activate_file_tab(window, temp_path.name, timeout=5)
 
-    yield window, temp_path
+        yield window, temp_path
+    finally:
+        if window is not None and temp_path is not None:
+            capture_window(window, request.node.name, "99-final")
+            try:
+                close_test_tab(window, temp_path.name)
+            except Exception as exc:
+                print(f"Cleanup warning: {exc}")
 
-    temp_path.unlink(missing_ok=True)
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 def find_window_for_file(desktop, file_name: str, timeout: float):
-    """Find the Notepad top-level window and return a WindowSpecification."""
-    deadline = time.time() + timeout
+    """Find the Notepad top-level window for the unique test file."""
+    deadline = time.monotonic() + timeout
     last_titles = []
 
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         last_titles = []
         for candidate in desktop.windows(control_type="Window"):
             try:
@@ -62,12 +72,12 @@ def find_window_for_file(desktop, file_name: str, timeout: float):
 
 
 def activate_file_tab(window, file_name: str, timeout: float) -> None:
-    """Select the exact Notepad tab and verify that it became selected."""
-    deadline = time.time() + timeout
+    """Select the exact Notepad tab, with a classic-Notepad title fallback."""
+    deadline = time.monotonic() + timeout
     expected_names = {file_name.lower(), Path(file_name).stem.lower()}
     last_tabs = []
 
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         root = window.wrapper_object()
         last_tabs = []
 
@@ -75,7 +85,6 @@ def activate_file_tab(window, file_name: str, timeout: float) -> None:
             try:
                 texts = tab_control.texts()
                 last_tabs.extend(texts)
-
                 matching_index = next(
                     (
                         index
@@ -84,15 +93,12 @@ def activate_file_tab(window, file_name: str, timeout: float) -> None:
                     ),
                     None,
                 )
-
                 if matching_index is None:
                     continue
 
                 tab_control.select(matching_index)
-                time.sleep(0.25)
-
-                selected_index = tab_control.get_selected_tab()
-                if selected_index == matching_index:
+                time.sleep(0.15)
+                if tab_control.get_selected_tab() == matching_index:
                     return
             except Exception:
                 continue
@@ -103,8 +109,7 @@ def activate_file_tab(window, file_name: str, timeout: float) -> None:
                 last_tabs.append(title)
                 if any(expected in title.lower() for expected in expected_names):
                     tab.click_input()
-                    time.sleep(0.25)
-
+                    time.sleep(0.15)
                     try:
                         if tab.iface_selection_item.CurrentIsSelected:
                             return
@@ -120,20 +125,19 @@ def activate_file_tab(window, file_name: str, timeout: float) -> None:
         except Exception:
             pass
 
-        time.sleep(0.25)
+        time.sleep(0.2)
 
     raise RuntimeError(
-        f"Could not activate Notepad tab for '{file_name}'. "
-        f"Tabs seen: {last_tabs}"
+        f"Could not activate Notepad tab for '{file_name}'. Tabs seen: {last_tabs}"
     )
 
 
 def find_editor(window):
-    """Return the visible editor of the currently selected Notepad tab."""
+    """Return the largest visible Document/Edit element in the active tab."""
     root = window.wrapper_object()
-    candidates = []
 
     for control_type in ("Document", "Edit"):
+        candidates = []
         for candidate in root.descendants(control_type=control_type):
             try:
                 rect = candidate.rectangle()
@@ -160,46 +164,80 @@ def find_editor(window):
 
 
 def set_text(editor, text: str) -> None:
-    """Enter text through real keyboard input so Notepad marks the file as dirty."""
+    """Paste deterministic text so the active keyboard layout cannot corrupt it."""
+    previous_clipboard_text = ""
+    try:
+        previous_clipboard_text = pyperclip.paste()
+    except pyperclip.PyperclipException:
+        pass
+
     editor.set_focus()
-    editor.type_keys("^a{BACKSPACE}")
-    editor.type_keys(text, with_spaces=True, pause=0.02)
+    editor.type_keys("^a")
+    pyperclip.copy(text)
+    editor.type_keys("^v")
+
+    wait_until(
+        lambda: read_text(editor) == text,
+        timeout=3,
+        failure=f"Editor did not become exactly {text!r}",
+    )
+
+    try:
+        pyperclip.copy(previous_clipboard_text)
+    except pyperclip.PyperclipException:
+        pass
 
 
 def read_text(editor) -> str:
-    """Read through ValuePattern or TextPattern, depending on the Notepad version."""
+    """Read through ValuePattern or TextPattern, depending on Notepad version."""
     try:
-        return editor.iface_value.CurrentValue
+        value = editor.iface_value.CurrentValue
     except (NoPatternInterfaceError, AttributeError):
-        return editor.iface_text.DocumentRange.GetText(-1).rstrip("\r\n")
+        value = editor.iface_text.DocumentRange.GetText(-1)
+    return value.rstrip("\r\n")
 
 
 def wait_for_saved_text(path: Path, expected: str, timeout: float = 5) -> None:
-    deadline = time.time() + timeout
-
-    while time.time() < deadline:
+    def saved_exactly() -> bool:
         try:
-            if expected in path.read_text(encoding="utf-8"):
-                return
+            return path.read_text(encoding="utf-8") == expected
         except (OSError, UnicodeDecodeError):
-            pass
-        time.sleep(0.1)
+            return False
 
-    actual = path.read_text(encoding="utf-8", errors="replace")
-    raise AssertionError(f"Saved file did not contain expected text. Actual: {actual!r}")
+    wait_until(
+        saved_exactly,
+        timeout=timeout,
+        failure=f"Saved file did not become exactly {expected!r}",
+    )
+
+
+def wait_until(condition, timeout: float, failure: str, interval: float = 0.1) -> None:
+    deadline = time.monotonic() + timeout
+    last_error = None
+
+    while time.monotonic() < deadline:
+        try:
+            if condition():
+                return
+        except Exception as exc:
+            last_error = exc
+        time.sleep(interval)
+
+    suffix = f" Last error: {last_error}" if last_error else ""
+    raise AssertionError(f"{failure}.{suffix}")
 
 
 def close_test_tab(window, file_name: str) -> None:
-    """Close only the test tab, not the whole Notepad window/session."""
+    """Close only the test tab, not the whole Notepad session."""
     activate_file_tab(window, file_name, timeout=3)
     editor = find_editor(window)
     editor.set_focus()
     editor.type_keys("^w")
-    time.sleep(0.25)
+    time.sleep(0.2)
 
 
 def capture_window(window, test_name: str, step: str) -> Path | None:
-    """Capture the Notepad window and attach it directly to the Allure test."""
+    """Capture the Notepad window and attach it directly to Allure."""
     try:
         artifacts_root = Path(
             os.environ.get("DESKTOP_TEST_ARTIFACTS_DIR", "python/TestArtifacts")
@@ -210,8 +248,7 @@ def capture_window(window, test_name: str, step: str) -> Path | None:
         target_dir = artifacts_root / safe_test_name
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        timestamp = time.strftime("%H%M%S")
-        target = target_dir / f"{timestamp}-{step}.png"
+        target = target_dir / f"{time.time_ns()}-{step}.png"
         image = window.wrapper_object().capture_as_image()
         image.save(target)
 
@@ -224,7 +261,6 @@ def capture_window(window, test_name: str, step: str) -> Path | None:
         print(f"Screenshot: {target}")
         return target
     except Exception as exc:
-        # Reporting should never change the functional test result.
         print(f"Screenshot warning: {exc}")
         return None
 
@@ -240,17 +276,14 @@ def test_can_type_read_and_save_text(notepad, request):
         capture_window(window, test_name, "00-opened")
         editor = find_editor(window)
 
-    with allure.step("Type text into Notepad"):
+    with allure.step("Paste layout-independent text into Notepad"):
         set_text(editor, TEXT)
-        time.sleep(0.3)
         capture_window(window, test_name, "01-text-entered")
-        assert TEXT in read_text(editor)
+        assert read_text(editor) == TEXT
 
-    with allure.step("Save with Ctrl+S and verify the file on disk"):
+    with allure.step("Save with Ctrl+S and verify exact file contents"):
         editor.set_focus()
         editor.type_keys("^s")
         wait_for_saved_text(temp_path, TEXT)
         capture_window(window, test_name, "02-saved")
-
-    with allure.step("Close only the test tab"):
-        close_test_tab(window, temp_path.name)
+        assert temp_path.read_text(encoding="utf-8") == TEXT

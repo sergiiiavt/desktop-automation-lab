@@ -24,14 +24,23 @@ Write-Host "============================================"
 Remove-Item -Recurse -Force allure-results, allure-report, test-artifacts -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path allure-results | Out-Null
 
-Write-Host "Running FULL portable FlaUI suite..."
+Write-Host "Running FlaUI suite..."
 dotnet test flaui/Notepad.Tests/Notepad.Tests.csproj --configuration Debug
+if ($LASTEXITCODE -ne 0) {
+    throw "FlaUI tests failed with exit code $LASTEXITCODE."
+}
 
 Write-Host "Running pywinauto suite with Allure results..."
 python -m pytest python/tests -vv --alluredir=allure-results
+if ($LASTEXITCODE -ne 0) {
+    throw "pywinauto tests failed with exit code $LASTEXITCODE."
+}
 
 $results = @(Get-ChildItem allure-results -Filter "*-result.json" -File)
 Write-Host "Allure test result files: $($results.Count)"
+if ($results.Count -eq 0) {
+    throw "No Allure result files were produced."
+}
 
 if (-not (Get-Command npx -ErrorAction SilentlyContinue)) {
     throw "npx was not found. Install Node.js, then run this script again."
@@ -39,6 +48,9 @@ if (-not (Get-Command npx -ErrorAction SilentlyContinue)) {
 
 Write-Host "Generating Allure 3 report..."
 npx -y allure@3.16.0 generate allure-results --config ./allurerc.mjs
+if ($LASTEXITCODE -ne 0) {
+    throw "Allure report generation failed with exit code $LASTEXITCODE."
+}
 
 Write-Host ""
 Write-Host "Allure report generated: $PWD\allure-report"
