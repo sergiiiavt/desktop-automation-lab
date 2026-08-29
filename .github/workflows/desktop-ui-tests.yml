@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: desktop-ui-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   desktop-tests:
     name: Notepad UI tests + screenshots + Allure
@@ -40,6 +44,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      - name: Cache npm downloads for Allure
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\npm-cache
+          key: npm-allure-${{ runner.os }}-3.16.0
 
       - name: Environment report
         shell: pwsh
@@ -92,54 +102,54 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Get-ChildItem allure-results -File | Select-Object Name, Length
-          $results = @(Get-ChildItem allure-results -Filter "*-result.json" -File)
+          $results = @(Get-ChildItem allure-results -Filter "*-result.json" -File -ErrorAction SilentlyContinue)
           Write-Host "Allure test result files in shared directory: $($results.Count)"
-          if ($results.Count -ne 5) {
-            Write-Warning "Expected 5 Allure test results (4 FlaUI + 1 pywinauto), found $($results.Count)."
+          if ($results.Count -eq 0) {
+            throw "No Allure test result files were produced."
           }
+          Get-ChildItem allure-results -File | Select-Object Name, Length
 
       - name: Generate Allure report
         if: always()
         shell: pwsh
-        run: npx -y allure@3.16.0 generate allure-results --config ./allurerc.mjs
+        run: npx --prefer-offline -y allure@3.16.0 generate allure-results --config ./allurerc.mjs
 
       - name: Publish latest Allure report to Hetzner
         if: always() && github.event_name != 'pull_request'
         shell: pwsh
         env:
           HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+          HETZNER_HOST: ${{ vars.HETZNER_HOST || '46.224.218.150' }}
+          HETZNER_SSH_USER: ${{ vars.HETZNER_SSH_USER || 'root' }}
+          HETZNER_SSH_PORT: ${{ vars.HETZNER_SSH_PORT || '22' }}
+          HETZNER_WEB_PORT: ${{ vars.HETZNER_WEB_PORT || '8089' }}
         run: |
           $ErrorActionPreference = "Stop"
 
           if (-not (Test-Path "allure-report/index.html")) {
             throw "No generated Allure report found."
           }
-
           if ([string]::IsNullOrWhiteSpace($env:HETZNER_SSH_KEY)) {
             throw "GitHub secret HETZNER_SSH_KEY is not configured."
           }
 
-          $hostName = "46.224.218.150"
-          $sshUser = "root"
-          $sshPort = 22
-          $webPort = 8089
+          $hostName = $env:HETZNER_HOST
+          $sshUser = $env:HETZNER_SSH_USER
+          $sshPort = [int]$env:HETZNER_SSH_PORT
+          $webPort = [int]$env:HETZNER_WEB_PORT
+          $releaseId = "${{ github.run_id }}-${{ github.run_attempt }}"
           $sshDir = Join-Path $HOME ".ssh"
           $keyPath = Join-Path $sshDir "desktop-automation-hetzner"
           $knownHosts = Join-Path $sshDir "known_hosts"
-          $remoteScriptPath = Join-Path $env:RUNNER_TEMP "desktop-automation-allure-setup.sh"
+          $archive = "desktop-automation-allure.tgz"
 
           New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
           New-Item -ItemType File -Force -Path $knownHosts | Out-Null
 
-          $keyText = $env:HETZNER_SSH_KEY.Trim()
-          $keyText = $keyText.Replace('\n', "`n").Replace("`r", "")
-
-          if (-not $keyText.StartsWith("-----BEGIN OPENSSH PRIVATE KEY-----")) {
-            throw "HETZNER_SSH_KEY does not start with an OpenSSH private-key header."
-          }
-          if (-not $keyText.EndsWith("-----END OPENSSH PRIVATE KEY-----")) {
-            throw "HETZNER_SSH_KEY does not end with an OpenSSH private-key footer."
+          $keyText = $env:HETZNER_SSH_KEY.Trim().Replace('\n', "`n").Replace("`r", "")
+          if (-not $keyText.StartsWith("-----BEGIN OPENSSH PRIVATE KEY-----") -or
+              -not $keyText.EndsWith("-----END OPENSSH PRIVATE KEY-----")) {
+            throw "HETZNER_SSH_KEY is not a complete OpenSSH private key."
           }
 
           [System.IO.File]::WriteAllText(
@@ -147,15 +157,18 @@ jobs:
             $keyText + "`n",
             [System.Text.UTF8Encoding]::new($false)
           )
-
           icacls $keyPath /inheritance:r | Out-Null
           icacls $keyPath /grant:r "$($env:USERNAME):(R)" | Out-Null
 
           & ssh-keygen -y -f $keyPath | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "HETZNER_SSH_KEY is not a valid readable OpenSSH private key." }
+          if ($LASTEXITCODE -ne 0) {
+            throw "HETZNER_SSH_KEY is not a readable OpenSSH private key."
+          }
 
-          tar -czf allure-report.tgz -C allure-report .
-          if ($LASTEXITCODE -ne 0) { throw "Failed to create Allure archive." }
+          tar -czf $archive -C allure-report .
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to create Allure report archive."
+          }
 
           $sshOptions = @(
             "-i", $keyPath,
@@ -163,83 +176,17 @@ jobs:
             "-o", "StrictHostKeyChecking=accept-new"
           )
 
-          & scp -P $sshPort @sshOptions allure-report.tgz "$sshUser@$hostName`:/tmp/desktop-automation-allure.tgz"
-          if ($LASTEXITCODE -ne 0) { throw "Failed to upload Allure report to Hetzner." }
+          & scp -P $sshPort @sshOptions $archive scripts/hetzner/deploy-allure.sh "$sshUser@$hostName`:/tmp/"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to upload the Allure release to Hetzner."
+          }
 
-          $remoteSetup = @'
-          set -eu
+          & ssh -p $sshPort @sshOptions "$sshUser@$hostName" "bash /tmp/deploy-allure.sh '$releaseId' '$webPort' && rm -f /tmp/deploy-allure.sh"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Hetzner Allure deployment failed."
+          }
 
-          SITE=/opt/desktop-automation-allure/site
-          SERVICE=/etc/systemd/system/desktop-automation-allure.service
-
-          mkdir -p "$SITE"
-          rm -rf "$SITE"/*
-          tar -xzf /tmp/desktop-automation-allure.tgz -C "$SITE"
-          rm -f /tmp/desktop-automation-allure.tgz
-
-          if ! command -v python3 >/dev/null 2>&1; then
-            apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y python3
-          fi
-
-          cat > "$SERVICE" <<'EOF'
-          [Unit]
-          Description=Desktop Automation Allure Report
-          After=network.target
-
-          [Service]
-          Type=simple
-          ExecStart=/usr/bin/python3 -m http.server 8089 --bind 0.0.0.0 --directory /opt/desktop-automation-allure/site
-          Restart=always
-          RestartSec=2
-
-          [Install]
-          WantedBy=multi-user.target
-          EOF
-
-          systemctl daemon-reload
-          systemctl enable desktop-automation-allure.service >/dev/null
-          systemctl restart desktop-automation-allure.service
-
-          if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
-            ufw allow 8089/tcp >/dev/null
-          fi
-
-          sleep 1
-          systemctl is-active --quiet desktop-automation-allure.service
-          curl --fail --silent --show-error http://127.0.0.1:8089/ >/dev/null
-          systemctl --no-pager --full status desktop-automation-allure.service || true
-
-          echo '=== LISTENING PORTS ==='
-          ss -ltnp || true
-          echo '=== UFW ==='
-          if command -v ufw >/dev/null 2>&1; then ufw status verbose || true; else echo 'ufw: not installed'; fi
-          echo '=== IPTABLES INPUT ==='
-          if command -v iptables >/dev/null 2>&1; then iptables -S INPUT || true; else echo 'iptables: not installed'; fi
-          echo '=== NFTABLES ==='
-          if command -v nft >/dev/null 2>&1; then nft list ruleset || true; else echo 'nft: not installed'; fi
-          echo '=== REVERSE PROXIES ==='
-          for svc in nginx apache2 caddy traefik; do
-            if systemctl list-unit-files "$svc.service" >/dev/null 2>&1; then
-              echo "$svc: $(systemctl is-active "$svc" 2>/dev/null || true)"
-            fi
-          done
-          '@
-
-          $remoteSetupLf = $remoteSetup.Replace("`r", "")
-          [System.IO.File]::WriteAllText(
-            $remoteScriptPath,
-            $remoteSetupLf + "`n",
-            [System.Text.UTF8Encoding]::new($false)
-          )
-
-          & scp -P $sshPort @sshOptions $remoteScriptPath "$sshUser@$hostName`:/tmp/desktop-automation-allure-setup.sh"
-          if ($LASTEXITCODE -ne 0) { throw "Failed to upload Hetzner setup script." }
-
-          & ssh -p $sshPort @sshOptions "$sshUser@$hostName" "bash /tmp/desktop-automation-allure-setup.sh && rm -f /tmp/desktop-automation-allure-setup.sh"
-          if ($LASTEXITCODE -ne 0) { throw "Hetzner remote setup failed." }
-
-          Remove-Item $keyPath, $remoteScriptPath, allure-report.tgz -Force -ErrorAction SilentlyContinue
+          Remove-Item $keyPath, $archive -Force -ErrorAction SilentlyContinue
           Write-Host "Allure report published to http://$hostName`:$webPort"
 
       - name: Upload report and screenshots

@@ -1,36 +1,41 @@
 # Desktop Automation Lab
 
-Windows desktop automation lab comparing the same Notepad flows with:
+A small Windows desktop UI automation lab that exercises the same Notepad application with two stacks:
 
 - **C# + NUnit + FlaUI + UIA3**
 - **Python + pytest + pywinauto (UIA backend)**
 
-The project deliberately treats the execution environment as part of the test result. A desktop UI test passing on a GitHub-hosted Windows Server runner does **not** prove that the same scenario passes on a user's Windows 11 installation with a different Notepad build, UI tree, keyboard layout, session state, or feature set.
+The repository intentionally stays small. It is a practical comparison of desktop automation approaches, CI execution, screenshots, and Allure reporting rather than a generic framework.
 
-## Validation levels
+## Current test coverage
 
-| Level | Environment | What it proves |
-| --- | --- | --- |
-| GitHub-hosted baseline | `windows-latest` / Windows Server | Basic launch, UI Automation discovery, editing and saving work in that runner image |
-| Local Windows validation | Your actual Windows 10/11 desktop | The suite works with your installed Notepad, locale, keyboard layouts and desktop session |
-| Self-hosted Windows 11 validation | Dedicated logged-in Windows 11 GitHub runner | CI execution against the same class of real desktop environment as local Windows 11 |
+### FlaUI
 
-**Rule:** report these results separately. `GitHub-hosted: PASS` must never be presented as `Windows 11 local: PASS` unless the local or self-hosted Windows 11 suite was also executed successfully.
+`flaui/Notepad.Tests/NotepadTests.cs`
 
-## FlaUI test categories
+1. Type text, save it, and verify exact file contents.
+2. Save initial text, replace it, and verify the replacement exactly.
+3. Select/copy text, verify the clipboard, replace the selection, save, and verify the file.
 
-`NotepadTests.cs` separates tests by environment requirement:
+`flaui/Notepad.Tests/NotepadZoomTests.cs`
 
-- `Baseline` — portable smoke scenarios intended for both GitHub-hosted and real Windows environments.
-- `ModernNotepad` — scenarios that require the modern Windows 11 Notepad feature set, such as formatting.
+4. Reset Notepad zoom to 100%, zoom in twice, verify the exposed zoom percentage, then reset to 100%.
 
-Current FlaUI scenarios include:
+Shared Notepad launch, UIA discovery, editor lookup, screenshots, file cleanup, and clipboard helpers live in `NotepadTestBase.cs` so the test fixtures contain mostly scenario logic.
 
-1. Type text and save it.
-2. Replace existing text with `Ctrl+A`, save, and verify the filesystem result.
-3. Select text and apply H1 + Bold on a modern Notepad build.
+### pywinauto
 
-Text entry in the baseline FlaUI tests uses **clipboard + Ctrl+V** rather than `Keyboard.Type(string)`. FlaUI's character typing relies on Windows keyboard-layout mapping, so the same Latin text can be typed incorrectly when the active layout is Ukrainian. Clipboard paste keeps the input deterministic while shortcuts such as `Ctrl+A` and `Ctrl+S` remain real keyboard interactions.
+`python/tests/test_notepad.py`
+
+5. Open a unique Notepad document, paste text independently of the active keyboard layout, read it through UI Automation, save it, and verify the exact file contents.
+
+The Python fixture owns cleanup, so the test tab is closed even when a test fails before its final assertion.
+
+## Why input uses the clipboard
+
+Desktop key simulation is affected by the active Windows keyboard layout. A Latin string can be corrupted when the runner or local machine is using a Ukrainian layout.
+
+Both implementations therefore use the Windows clipboard plus `Ctrl+V` for arbitrary text. Keyboard shortcuts such as `Ctrl+A`, `Ctrl+C`, `Ctrl+S`, `Ctrl+W`, and zoom shortcuts remain real keyboard interactions.
 
 ## Project structure
 
@@ -39,27 +44,35 @@ desktop-automation-lab/
 ├── flaui/
 │   └── Notepad.Tests/
 │       ├── Notepad.Tests.csproj
-│       └── NotepadTests.cs
+│       ├── NotepadTestBase.cs
+│       ├── NotepadTests.cs
+│       ├── NotepadZoomTests.cs
+│       └── allureConfig.json
 ├── python/
 │   ├── inspect_notepad.py
 │   ├── requirements.txt
 │   └── tests/
 │       └── test_notepad.py
 ├── scripts/
-│   └── run-local.ps1
-└── .github/
-    └── workflows/
-        ├── desktop-ui-tests.yml
-        └── desktop-ui-tests-windows11-self-hosted.yml
+│   ├── run-local.ps1
+│   └── hetzner/
+│       ├── deploy-allure.sh
+│       └── setup-allure-host.sh
+├── docs/
+│   └── allure-report-hosting.md
+├── allurerc.mjs
+└── .github/workflows/
+    └── desktop-ui-tests.yml
 ```
 
-## Run full validation locally
+## Run locally
 
 Requirements:
 
-- Windows 10/11
+- Windows 10/11 with an interactive desktop session
 - .NET 8 SDK
-- Python with dependencies from `python/requirements.txt`
+- Python 3.12+
+- Node.js / `npx` for Allure report generation
 
 Install Python dependencies once:
 
@@ -67,90 +80,77 @@ Install Python dependencies once:
 python -m pip install -r python/requirements.txt
 ```
 
-Then run the complete local suite:
+Run the complete local suite:
 
 ```powershell
 .\scripts\run-local.ps1
 ```
 
-The script prints the environment first, including OS, .NET, Python and installed Notepad package/version when available, then runs:
+Or run the stacks separately:
 
 ```powershell
 dotnet test flaui/Notepad.Tests/Notepad.Tests.csproj --configuration Debug
-python -m pytest python/tests -vv
+python -m pytest python/tests -vv --alluredir=allure-results
 ```
 
-Run only the FlaUI baseline tests locally:
+Inspect the current Notepad UI Automation tree with:
 
 ```powershell
-dotnet test flaui/Notepad.Tests/Notepad.Tests.csproj --filter "TestCategory=Baseline"
+python python/inspect_notepad.py
 ```
 
-Run only the modern Notepad formatting tests:
+The inspector opens a unique temporary document and closes only that document when finished, instead of assuming the `notepad.exe` launcher PID owns the final window.
+
+## CI
+
+`.github/workflows/desktop-ui-tests.yml` runs on:
+
+- pushes to `main`;
+- pull requests targeting `main`;
+- manual `workflow_dispatch` runs.
+
+The current GitHub-hosted baseline uses `windows-latest` (Windows Server), runs all four FlaUI scenarios plus the pywinauto scenario, captures screenshots for successful tests as well as failures, generates one combined Allure report, and uploads the report/artifacts to GitHub Actions.
+
+A green hosted run proves the scenarios passed on that runner image. It does not claim that every Windows 11 Notepad build exposes the identical UI Automation tree.
+
+## Allure report
+
+All C# and Python results are written into the same flat `allure-results/` directory and rendered by Allure 3.
+
+Locally:
 
 ```powershell
-dotnet test flaui/Notepad.Tests/Notepad.Tests.csproj --filter "TestCategory=ModernNotepad"
+npx -y allure@3.16.0 generate allure-results --config ./allurerc.mjs
+npx -y allure@3.16.0 open allure-report
 ```
 
-## GitHub-hosted CI
+On `main`, CI also publishes the latest generated report to the configured Hetzner host. Deployment uses release directories and an atomic `site` symlink switch, so a new report does not replace the live directory file-by-file.
 
-`.github/workflows/desktop-ui-tests.yml` runs automatically for pull requests and `main`.
-
-It intentionally runs **only the FlaUI `Baseline` category** on the GitHub-hosted Windows runner:
-
-```text
-GitHub-hosted Windows Server
-        ↓
-Baseline FlaUI tests
-        +
-pywinauto tests
-```
-
-The workflow also saves environment information with the test artifacts. A green result means only that the baseline passed on that particular runner image.
-
-Modern Windows 11 formatting tests are excluded from this hosted baseline because the runner's Notepad build can differ materially from the current Windows 11 Store/packaged Notepad.
-
-## Full CI on real Windows 11
-
-`.github/workflows/desktop-ui-tests-windows11-self-hosted.yml` is a **manual** workflow for a Windows 11 self-hosted runner labeled:
-
-```text
-self-hosted
-Windows
-desktop-ui
-```
-
-It runs the **full** FlaUI suite, including `ModernNotepad`, plus pywinauto.
-
-The self-hosted runner should run in an interactive, logged-in and unlocked Windows desktop session. Desktop UI automation should not be treated like a headless API/unit-test workload.
-
-## Environment diagnostics
-
-FlaUI test output records:
-
-- execution environment label (`local`, GitHub-hosted, self-hosted);
-- OS version;
-- current keyboard layout where available;
-- Notepad process path/version where accessible;
-- whether the modern formatting UI was detected.
-
-This makes a local/CI mismatch actionable instead of treating it as an unexplained flaky test.
+See `docs/allure-report-hosting.md` for server details and GitHub variables/secrets.
 
 ## UI Automation locator strategy
 
-Notepad implementations differ between Windows versions. The editor locator currently supports both:
+Notepad implementations differ between Windows versions. The shared FlaUI editor lookup supports both common control types:
 
 ```csharp
 window.FindFirstDescendant(cf => cf.ByControlType(ControlType.Document))
     ?? window.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit));
 ```
 
-For other applications, inspect controls with FlaUInspect and prefer stable properties such as:
+For real applications, prefer stable application-owned identifiers in roughly this order:
 
-- `AutomationId`
-- `Name`
-- `ControlType`
-- `ClassName`
-- supported patterns (`Value`, `Text`, `Invoke`, `Selection`, etc.)
+1. `AutomationId`
+2. stable semantic `Name`
+3. `ControlType`
+4. `ClassName`
+5. supported UIA patterns such as Value, Text, Invoke, Selection, or Toggle
 
-Prefer a stable `AutomationId` when the application exposes one. Use fallbacks only when the application's UI Automation tree genuinely differs across supported versions.
+Fallback locators are appropriate only when supported application versions genuinely expose different UI Automation trees.
+
+## Test design notes
+
+- Test documents use unique temporary filenames to avoid attaching to an unrelated existing Notepad tab.
+- Modern Notepad can reuse a process/window and open documents as tabs, so launcher PID alone is not treated as identity.
+- Functional assertions use exact text/file equality where the scenario replaces the entire document.
+- Reporting failures are logged but do not change the functional test result.
+- Meaningful state changes use polling instead of arbitrary long sleeps; very short UI-settling waits remain where Windows exposes no reliable state to observe.
