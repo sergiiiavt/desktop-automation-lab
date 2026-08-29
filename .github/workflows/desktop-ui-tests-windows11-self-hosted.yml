@@ -63,7 +63,7 @@ jobs:
       - name: Clean previous results
         shell: pwsh
         run: |
-          Remove-Item -Recurse -Force test-artifacts, allure-results, flaui-allure-results, allure-report, flaui/TestResults -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force test-artifacts, allure-results, allure-report, flaui/TestResults -ErrorAction SilentlyContinue
           Remove-Item pywinauto-pytest.xml -Force -ErrorAction SilentlyContinue
 
       - name: Run ALL FlaUI tests
@@ -73,17 +73,6 @@ jobs:
           --configuration Release
           --logger "trx;LogFileName=flaui.trx"
           --results-directory flaui/TestResults
-
-      - name: Collect FlaUI Allure results
-        if: always()
-        shell: pwsh
-        run: |
-          $source = "flaui/Notepad.Tests/bin/Release/net8.0-windows/allure-results/flaui"
-          $target = "flaui-allure-results"
-          New-Item -ItemType Directory -Force -Path $target | Out-Null
-          if (Test-Path $source) {
-            Copy-Item "$source\*" $target -Recurse -Force
-          }
 
       - name: Install Python dependencies
         if: always()
@@ -96,16 +85,25 @@ jobs:
         run: >-
           python -m pytest python/tests -vv
           --junitxml=pywinauto-pytest.xml
-          --alluredir=allure-results
+          --alluredir=allure-results/python
           --clean-alluredir
 
-      - name: Merge FlaUI results into Allure
+      - name: Show collected Allure results
         if: always()
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path allure-results | Out-Null
-          if (Test-Path flaui-allure-results) {
-            Copy-Item "flaui-allure-results\*" allure-results -Recurse -Force
+          Write-Host "FlaUI result files:"
+          if (Test-Path allure-results/flaui) {
+            Get-ChildItem allure-results/flaui -File | Select-Object Name, Length
+          } else {
+            Write-Warning "allure-results/flaui was not created"
+          }
+
+          Write-Host "Python result files:"
+          if (Test-Path allure-results/python) {
+            Get-ChildItem allure-results/python -File | Select-Object Name, Length
+          } else {
+            Write-Warning "allure-results/python was not created"
           }
 
       - name: Generate Allure report
