@@ -1,5 +1,5 @@
 {
   "allure": {
-    "directory": "."
+    "directory": "../../../../../allure-results/flaui"
   }
 }
