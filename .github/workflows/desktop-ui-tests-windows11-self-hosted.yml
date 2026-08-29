@@ -1,0 +1,61 @@
+name: Desktop UI full validation - Windows 11 self-hosted
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-windows11:
+    name: Full desktop suite on real Windows 11
+    runs-on: [self-hosted, Windows, desktop-ui]
+    timeout-minutes: 15
+    env:
+      DESKTOP_TEST_ENVIRONMENT: self-hosted-windows11
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Environment report
+        shell: pwsh
+        run: |
+          "Runner: self-hosted Windows" | Out-File desktop-environment.txt
+          "Computer: $env:COMPUTERNAME" | Add-Content desktop-environment.txt
+          "OS: $([System.Environment]::OSVersion.VersionString)" | Add-Content desktop-environment.txt
+          "Interactive user: $env:USERNAME" | Add-Content desktop-environment.txt
+          "dotnet: $(dotnet --version)" | Add-Content desktop-environment.txt
+          "python: $(python --version)" | Add-Content desktop-environment.txt
+          $notepad = Get-Process Notepad -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($notepad) {
+            "Existing Notepad PID: $($notepad.Id)" | Add-Content desktop-environment.txt
+          }
+          Get-Content desktop-environment.txt
+
+      - name: Run full FlaUI suite including modern Notepad tests
+        shell: pwsh
+        run: >-
+          dotnet test flaui/Notepad.Tests/Notepad.Tests.csproj
+          --configuration Release
+          --logger "trx;LogFileName=flaui-windows11.trx"
+          --results-directory flaui/TestResults-Windows11
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: python -m pip install -r python/requirements.txt
+
+      - name: Run pywinauto suite
+        shell: pwsh
+        run: python -m pytest python/tests -vv --junitxml=pywinauto-windows11.xml
+
+      - name: Upload full Windows 11 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows11-self-hosted-results
+          path: |
+            desktop-environment.txt
+            flaui/TestResults-Windows11
+            pywinauto-windows11.xml
+          if-no-files-found: ignore
