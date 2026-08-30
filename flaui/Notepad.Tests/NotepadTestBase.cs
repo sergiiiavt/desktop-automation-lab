@@ -18,7 +18,7 @@ public abstract class NotepadTestBase
     private UIA3Automation? _automation;
     private Window? _window;
     private int? _notepadProcessId;
-    private int? _windowHandle;
+    private nint? _windowHandle;
     private bool _windowExistedBeforeTest;
     private string? _tempFilePath;
 
@@ -67,7 +67,7 @@ public abstract class NotepadTestBase
         _notepadProcessId = _window.Properties.ProcessId.Value;
         _windowHandle = SafeNativeWindowHandle(_window);
         _windowExistedBeforeTest =
-            _windowHandle is int handle && preexistingWindowHandles.Contains(handle);
+            _windowHandle is nint handle && preexistingWindowHandles.Contains(handle);
 
         WriteEnvironmentDiagnostics();
         CaptureWindow("00-opened");
@@ -336,7 +336,7 @@ public abstract class NotepadTestBase
         {
             _window.Close();
 
-            if (_windowHandle is int handle)
+            if (_windowHandle is nint handle)
             {
                 var closed = Retry.WhileTrue(
                     () => WindowHandleExists(handle),
@@ -420,7 +420,7 @@ public abstract class NotepadTestBase
         return false;
     }
 
-    private static HashSet<int> GetTopLevelWindowHandles(UIA3Automation automation)
+    private static HashSet<nint> GetTopLevelWindowHandles(UIA3Automation automation)
     {
         try
         {
@@ -433,11 +433,11 @@ public abstract class NotepadTestBase
         }
         catch
         {
-            return new HashSet<int>();
+            return new HashSet<nint>();
         }
     }
 
-    private bool WindowHandleExists(int handle)
+    private bool WindowHandleExists(nint handle)
     {
         if (_automation is null)
         {
@@ -468,7 +468,7 @@ public abstract class NotepadTestBase
         }
     }
 
-    private static int? SafeNativeWindowHandle(AutomationElement element)
+    private static nint? SafeNativeWindowHandle(AutomationElement element)
     {
         try
         {
