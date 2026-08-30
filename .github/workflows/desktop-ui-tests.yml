@@ -98,7 +98,7 @@ jobs:
           --junitxml=pywinauto-pytest.xml
           --alluredir=allure-results
 
-      - name: Show collected Allure results
+      - name: Normalize and show collected Allure results
         if: always()
         shell: pwsh
         run: |
@@ -106,6 +106,10 @@ jobs:
           Write-Host "Allure test result files in shared directory: $($results.Count)"
           if ($results.Count -eq 0) {
             throw "No Allure test result files were produced."
+          }
+          python scripts/normalize-allure-hierarchy.py allure-results
+          if ($LASTEXITCODE -ne 0) {
+            throw "Allure hierarchy normalization failed."
           }
           Get-ChildItem allure-results -File | Select-Object Name, Length
 
