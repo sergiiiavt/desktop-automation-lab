@@ -1,3 +1,4 @@
+using Allure.Net.Commons;
 using Allure.NUnit;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Input;
@@ -12,16 +13,23 @@ namespace Notepad.Tests;
 [NonParallelizable]
 public class NotepadZoomTests : NotepadTestBase
 {
+    private const string TestCaseId = "TC0004";
     private const string VisibleText =
-        "Visible FlaUI zoom test - this text should become noticeably larger";
+        "[TC0004] Visible FlaUI zoom test - this text should become noticeably larger";
 
     protected override string InitialText => VisibleText;
     protected override string TempFilePrefix => "desktop-automation-zoom-";
 
     [Test]
     [Category("PortableNotepad")]
-    public void CanZoomTextInAndReset()
+    [Property("TestCaseId", TestCaseId)]
+    public void TC0004_CanZoomTextInAndReset()
     {
+        AllureApi.SetTestName("TC0004 | Can zoom text in and reset");
+        AllureApi.AddLabel("testCaseId", TestCaseId);
+        AllureApi.AddTags(TestCaseId);
+        TestContext.Progress.WriteLine("Test case: TC0004 | Can zoom text in and reset");
+
         var editor = FindEditor();
         Assert.That(ReadEditorText(editor), Is.EqualTo(VisibleText));
 
