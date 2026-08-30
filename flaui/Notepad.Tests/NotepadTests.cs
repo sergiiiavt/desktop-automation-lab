@@ -1,3 +1,4 @@
+using Allure.Net.Commons;
 using Allure.NUnit;
 using FlaUI.Core.Input;
 using FlaUI.Core.WindowsAPI;
@@ -12,9 +13,12 @@ public class NotepadTests : NotepadTestBase
 {
     [Test]
     [Category("PortableNotepad")]
-    public void CanTypeAndSaveText()
+    [Property("TestCaseId", "TC0001")]
+    public void TC0001_CanTypeAndSaveText()
     {
-        const string expected = "Hello desktop automation";
+        const string testCaseId = "TC0001";
+        const string expected = "[TC0001] Hello desktop automation";
+        RegisterTestCase(testCaseId, "Can type and save text");
 
         var editor = FindEditor();
         ReplaceTextWithClipboard(editor, expected);
@@ -30,10 +34,13 @@ public class NotepadTests : NotepadTestBase
 
     [Test]
     [Category("PortableNotepad")]
-    public void CanReplaceExistingTextAndSave()
+    [Property("TestCaseId", "TC0002")]
+    public void TC0002_CanReplaceExistingTextAndSave()
     {
-        const string initialText = "Initial desktop text";
-        const string replacementText = "Replaced by FlaUI";
+        const string testCaseId = "TC0002";
+        const string initialText = "[TC0002] Initial desktop text";
+        const string replacementText = "[TC0002] Replaced by FlaUI";
+        RegisterTestCase(testCaseId, "Can replace existing text and save");
 
         var editor = FindEditor();
 
@@ -53,10 +60,13 @@ public class NotepadTests : NotepadTestBase
 
     [Test]
     [Category("PortableNotepad")]
-    public void CanSelectAllCopyReplaceAndSave()
+    [Property("TestCaseId", "TC0003")]
+    public void TC0003_CanSelectAllCopyReplaceAndSave()
     {
-        const string originalText = "Text selected and copied by FlaUI";
-        const string replacementText = "Text replaced after copy";
+        const string testCaseId = "TC0003";
+        const string originalText = "[TC0003] Text selected and copied by FlaUI";
+        const string replacementText = "[TC0003] Text replaced after copy";
+        RegisterTestCase(testCaseId, "Can select all, copy, replace and save");
 
         var editor = FindEditor();
         ReplaceTextWithClipboard(editor, originalText);
@@ -86,5 +96,13 @@ public class NotepadTests : NotepadTestBase
         SaveAndWaitForText(replacementText);
         CaptureWindow("04-saved");
         Assert.That(File.ReadAllText(TestFilePath), Is.EqualTo(replacementText));
+    }
+
+    private static void RegisterTestCase(string testCaseId, string title)
+    {
+        AllureApi.SetTestName($"{testCaseId} | {title}");
+        AllureApi.AddLabel("testCaseId", testCaseId);
+        AllureApi.AddTags(testCaseId);
+        TestContext.Progress.WriteLine($"Test case: {testCaseId} | {title}");
     }
 }
