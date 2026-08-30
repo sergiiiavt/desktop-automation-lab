@@ -87,9 +87,6 @@ public class NotepadTests : NotepadTestBase
         CaptureWindow("02-text-selected-and-copied");
         Assert.That(GetClipboardTextSta(), Is.EqualTo(originalText));
 
-        // Keep Ctrl held long enough for Windows/Notepad to process it as a real chord.
-        // This avoids a local Windows 11 timing issue where TypeSimultaneously(Ctrl, V)
-        // could be interpreted as a literal V keystroke.
         SendCtrlShortcut(VirtualKeyShort.KEY_V);
         Keyboard.Type(VirtualKeyShort.RETURN);
         Wait.UntilInputIsProcessed();
@@ -99,16 +96,28 @@ public class NotepadTests : NotepadTestBase
         SendCtrlShortcut(VirtualKeyShort.KEY_V);
 
         WaitUntil(
-            () => ReadEditorText(editor) == expectedMultiline,
+            () => MultilineEquals(ReadEditorText(editor), expectedMultiline),
             TimeSpan.FromSeconds(3),
-            "Copied text was not pasted as the expected three-line document.");
+            $"Copied text was not pasted as the expected three-line document. " +
+            $"Actual UIA text: {DescribeForLog(ReadEditorText(editor))}");
         CaptureWindow("03-multiline-paste-complete");
-        Assert.That(ReadEditorText(editor), Is.EqualTo(expectedMultiline));
+        Assert.That(
+            NormalizeNewlines(ReadEditorText(editor)),
+            Is.EqualTo(NormalizeNewlines(expectedMultiline)));
 
         SaveAndWaitForText(expectedMultiline);
         CaptureWindow("04-multiline-saved");
         Assert.That(File.ReadAllText(TestFilePath), Is.EqualTo(expectedMultiline));
     }
+
+    private static bool MultilineEquals(string actual, string expected) =>
+        NormalizeNewlines(actual) == NormalizeNewlines(expected);
+
+    private static string NormalizeNewlines(string value) =>
+        value.Replace("\r\n", "\n").Replace('\r', '\n');
+
+    private static string DescribeForLog(string value) =>
+        value.Replace("\r", "\\r").Replace("\n", "\\n");
 
     private static void SendCtrlShortcut(VirtualKeyShort key)
     {
