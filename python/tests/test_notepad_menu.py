@@ -5,15 +5,14 @@ import time
 from pathlib import Path
 
 import allure
+import pyperclip
 import pytest
 from pywinauto import Desktop
 from pywinauto.findwindows import ElementNotFoundError
 from pywinauto.uia_defines import NoPatternInterfaceError
 
 TEST_CASE_ID = "TC0007"
-VISIBLE_TEXT = (
-    "[TC0007] pywinauto menu test - watch View > Zoom > Zoom in being clicked"
-)
+VISIBLE_TEXT = "[TC0007] pywinauto portable menu test"
 
 
 @pytest.fixture
@@ -43,8 +42,6 @@ def notepad_menu(request):
             try:
                 editor = find_editor(window)
                 editor.set_focus()
-                editor.type_keys("^0")
-                time.sleep(0.15)
                 editor.type_keys("^w")
                 time.sleep(0.25)
             except Exception as exc:
@@ -108,7 +105,13 @@ def click_visible_menu_item(desktop, name: str, timeout: float = 4) -> None:
         f"({rect.mid_point().x}, {rect.mid_point().y})"
     )
     item.click_input()
-    time.sleep(0.45)
+    time.sleep(0.35)
+
+
+def click_menu_command(desktop, window, test_name: str, menu_name: str, command_name: str, step: str) -> None:
+    click_visible_menu_item(desktop, menu_name)
+    capture_window(window, test_name, step)
+    click_visible_menu_item(desktop, command_name)
 
 
 def wait_for_menu_item(desktop, name: str, timeout: float):
@@ -138,42 +141,20 @@ def wait_for_menu_item(desktop, name: str, timeout: float):
     )
 
 
-def rendered_text_size(editor):
-    try:
-        values = list(editor.iface_text.DocumentRange.GetBoundingRectangles())
-    except Exception:
-        return None
-
-    if not values:
-        return None
-
-    # UI Automation returns a flattened sequence: left, top, width, height, ...
-    if all(isinstance(value, (int, float)) for value in values):
-        rectangles = [values[index : index + 4] for index in range(0, len(values), 4)]
-        rectangles = [rect for rect in rectangles if len(rect) == 4 and rect[2] > 0 and rect[3] > 0]
-        if not rectangles:
-            return None
-        left = min(rect[0] for rect in rectangles)
-        top = min(rect[1] for rect in rectangles)
-        right = max(rect[0] + rect[2] for rect in rectangles)
-        bottom = max(rect[1] + rect[3] for rect in rectangles)
-        return right - left, bottom - top
-
-    return None
-
-
-def wait_for_larger_text(editor, baseline, timeout: float = 4):
+def wait_until(condition, timeout: float, failure: str, interval: float = 0.1) -> None:
     deadline = time.monotonic() + timeout
-    last = None
     while time.monotonic() < deadline:
-        last = rendered_text_size(editor)
-        if last and (last[0] > baseline[0] * 1.05 or last[1] > baseline[1] * 1.05):
-            return last
-        time.sleep(0.1)
-    raise AssertionError(
-        f"Zoom in menu command was clicked but rendered text did not grow. "
-        f"Before={baseline}; last={last}"
-    )
+        try:
+            if condition():
+                return
+        except Exception:
+            pass
+        time.sleep(interval)
+    raise AssertionError(failure)
+
+
+def normalize_newlines(value: str) -> str:
+    return value.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def capture_window(window, test_name: str, step: str) -> None:
@@ -198,35 +179,64 @@ def capture_window(window, test_name: str, step: str) -> None:
 
 @allure.feature("Notepad desktop automation")
 @allure.suite("Python - Notepad")
-@allure.title("TC0007 | Can zoom in through visible menu clicks")
+@allure.title("TC0007 | Can copy and paste through visible menu clicks")
 @allure.label("testCaseId", TEST_CASE_ID)
-@allure.tag(TEST_CASE_ID, "menu", "mouse")
-def test_TC0007_can_zoom_in_through_visible_menu_clicks(notepad_menu, request):
+@allure.tag(TEST_CASE_ID, "menu", "mouse", "portable")
+def test_TC0007_can_copy_and_paste_through_visible_menu_clicks(notepad_menu, request):
     desktop, window, _ = notepad_menu
     test_name = request.node.name
     editor = find_editor(window)
 
     assert read_text(editor) == VISIBLE_TEXT
-
-    editor.set_focus()
-    editor.type_keys("^0")
-    time.sleep(0.2)
-    baseline = rendered_text_size(editor)
-    assert baseline is not None, "TextPattern bounds are required to verify zoom visually."
     capture_window(window, test_name, "01-before-menu-clicks")
 
-    with allure.step(f"{TEST_CASE_ID} | Physically click View"):
-        click_visible_menu_item(desktop, "View")
-        capture_window(window, test_name, "02-view-menu-open")
+    with allure.step(f"{TEST_CASE_ID} | Physically click Edit > Select all"):
+        click_menu_command(
+            desktop,
+            window,
+            test_name,
+            "Edit",
+            "Select all",
+            "02-edit-menu-open-before-select-all",
+        )
 
-    with allure.step(f"{TEST_CASE_ID} | Physically click Zoom"):
-        click_visible_menu_item(desktop, "Zoom")
-        capture_window(window, test_name, "03-zoom-submenu-open")
+    with allure.step(f"{TEST_CASE_ID} | Physically click Edit > Copy"):
+        click_menu_command(
+            desktop,
+            window,
+            test_name,
+            "Edit",
+            "Copy",
+            "03-edit-menu-open-before-copy",
+        )
+        wait_until(
+            lambda: pyperclip.paste() == VISIBLE_TEXT,
+            timeout=3,
+            failure=f"Edit > Copy did not place {VISIBLE_TEXT!r} on the clipboard.",
+        )
+        assert pyperclip.paste() == VISIBLE_TEXT
+        capture_window(window, test_name, "04-copied-through-menu")
 
-    with allure.step(f"{TEST_CASE_ID} | Physically click Zoom in"):
-        click_visible_menu_item(desktop, "Zoom in")
-        enlarged = wait_for_larger_text(editor, baseline)
-        capture_window(window, test_name, "04-after-zoom-in-menu-click")
+    editor.set_focus()
+    editor.type_keys("{END}{ENTER}")
+    time.sleep(0.2)
 
-    assert enlarged[0] > baseline[0] * 1.05 or enlarged[1] > baseline[1] * 1.05
-    assert read_text(editor) == VISIBLE_TEXT
+    with allure.step(f"{TEST_CASE_ID} | Physically click Edit > Paste"):
+        click_menu_command(
+            desktop,
+            window,
+            test_name,
+            "Edit",
+            "Paste",
+            "05-edit-menu-open-before-paste",
+        )
+
+    expected = VISIBLE_TEXT + "\n" + VISIBLE_TEXT
+    wait_until(
+        lambda: normalize_newlines(read_text(editor)) == expected,
+        timeout=3,
+        failure="Edit > Paste did not append the copied text on a new line.",
+    )
+    capture_window(window, test_name, "06-pasted-through-menu")
+
+    assert normalize_newlines(read_text(editor)) == expected
