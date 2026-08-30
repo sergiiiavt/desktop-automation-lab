@@ -173,6 +173,17 @@ def find_editor(window):
     )
 
 
+def send_ctrl_shortcut(control, key: str) -> None:
+    """Send a Ctrl chord with explicit key-down/up timing for modern Notepad."""
+    control.set_focus()
+    control.type_keys("{VK_CONTROL down}", pause=0.05)
+    time.sleep(0.06)
+    control.type_keys(key, pause=0.05)
+    time.sleep(0.06)
+    control.type_keys("{VK_CONTROL up}", pause=0.05)
+    time.sleep(0.08)
+
+
 def set_text(editor, text: str) -> None:
     """Paste deterministic text so the active keyboard layout cannot corrupt it."""
     previous_clipboard_text = ""
@@ -181,16 +192,22 @@ def set_text(editor, text: str) -> None:
     except pyperclip.PyperclipException:
         pass
 
-    editor.set_focus()
-    editor.type_keys("^a")
+    send_ctrl_shortcut(editor, "a")
     pyperclip.copy(text)
-    editor.type_keys("^v")
+    time.sleep(0.1)
+    send_ctrl_shortcut(editor, "v")
 
-    wait_until(
-        lambda: read_text(editor) == text,
-        timeout=3,
-        failure=f"Editor did not become exactly {text!r}",
-    )
+    try:
+        wait_until(
+            lambda: read_text(editor) == text,
+            timeout=4,
+            failure=f"Editor did not become exactly {text!r}",
+        )
+    except AssertionError as exc:
+        actual = read_text(editor)
+        raise AssertionError(
+            f"{exc} Actual editor text: {actual!r}"
+        ) from exc
 
     try:
         pyperclip.copy(previous_clipboard_text)
@@ -241,8 +258,7 @@ def close_test_tab(window, file_name: str) -> None:
     """Close the exact test tab without touching unrelated Notepad documents."""
     activate_file_tab(window, file_name, timeout=3)
     editor = find_editor(window)
-    editor.set_focus()
-    editor.type_keys("^w")
+    send_ctrl_shortcut(editor, "w")
     time.sleep(0.2)
 
 
@@ -320,8 +336,7 @@ def test_TC0005_can_type_read_and_save_text(notepad, request):
         assert read_text(editor) == TEXT
 
     with allure.step(f"{TEST_CASE_ID} | Save with Ctrl+S and verify exact file contents"):
-        editor.set_focus()
-        editor.type_keys("^s")
+        send_ctrl_shortcut(editor, "s")
         wait_for_saved_text(temp_path, TEXT)
         capture_window(window, test_name, "02-saved")
         assert temp_path.read_text(encoding="utf-8") == TEXT
