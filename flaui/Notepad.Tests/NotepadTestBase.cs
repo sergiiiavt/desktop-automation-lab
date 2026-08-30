@@ -18,6 +18,8 @@ public abstract class NotepadTestBase
     private UIA3Automation? _automation;
     private Window? _window;
     private int? _notepadProcessId;
+    private int? _windowHandle;
+    private bool _windowExistedBeforeTest;
     private string? _tempFilePath;
 
     protected virtual string InitialText => string.Empty;
@@ -33,6 +35,8 @@ public abstract class NotepadTestBase
     public void BaseSetUp()
     {
         _automation = new UIA3Automation();
+        var preexistingWindowHandles = GetTopLevelWindowHandles(_automation);
+
         _tempFilePath = Path.Combine(
             Path.GetTempPath(),
             $"{TempFilePrefix}{Guid.NewGuid():N}.txt");
@@ -61,6 +65,10 @@ public abstract class NotepadTestBase
 
         _window = windowResult.Result;
         _notepadProcessId = _window.Properties.ProcessId.Value;
+        _windowHandle = SafeNativeWindowHandle(_window);
+        _windowExistedBeforeTest =
+            _windowHandle is int handle && preexistingWindowHandles.Contains(handle);
+
         WriteEnvironmentDiagnostics();
         CaptureWindow("00-opened");
     }
@@ -84,6 +92,11 @@ public abstract class NotepadTestBase
 
                 TryDiscardUnsavedChanges();
                 testDocumentClosed = WaitUntilTestFileIsNoLongerOpen(TimeSpan.FromSeconds(3));
+
+                if (testDocumentClosed && !_windowExistedBeforeTest)
+                {
+                    TryCloseTestCreatedWindow();
+                }
             }
         }
         catch (Exception ex)
@@ -108,6 +121,8 @@ public abstract class NotepadTestBase
             _automation = null;
             _window = null;
             _notepadProcessId = null;
+            _windowHandle = null;
+            _windowExistedBeforeTest = false;
             _tempFilePath = null;
         }
     }
@@ -310,6 +325,38 @@ public abstract class NotepadTestBase
         }
     }
 
+    private void TryCloseTestCreatedWindow()
+    {
+        if (_window is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _window.Close();
+
+            if (_windowHandle is int handle)
+            {
+                var closed = Retry.WhileTrue(
+                    () => WindowHandleExists(handle),
+                    timeout: TimeSpan.FromSeconds(3),
+                    interval: TimeSpan.FromMilliseconds(100),
+                    ignoreException: true);
+
+                if (!closed.Success)
+                {
+                    TestContext.Progress.WriteLine(
+                        $"Cleanup warning: test-created Notepad window {handle} did not close.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            TestContext.Progress.WriteLine($"Window cleanup warning: {ex.Message}");
+        }
+    }
+
     private bool WaitUntilTestFileIsNoLongerOpen(TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
@@ -373,6 +420,42 @@ public abstract class NotepadTestBase
         return false;
     }
 
+    private static HashSet<int> GetTopLevelWindowHandles(UIA3Automation automation)
+    {
+        try
+        {
+            return automation.GetDesktop()
+                .FindAllChildren(cf => cf.ByControlType(ControlType.Window))
+                .Select(SafeNativeWindowHandle)
+                .Where(handle => handle is > 0)
+                .Select(handle => handle!.Value)
+                .ToHashSet();
+        }
+        catch
+        {
+            return new HashSet<int>();
+        }
+    }
+
+    private bool WindowHandleExists(int handle)
+    {
+        if (_automation is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            return _automation.GetDesktop()
+                .FindAllChildren(cf => cf.ByControlType(ControlType.Window))
+                .Any(element => SafeNativeWindowHandle(element) == handle);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static int SafeProcessId(AutomationElement element)
     {
         try
@@ -385,6 +468,18 @@ public abstract class NotepadTestBase
         }
     }
 
+    private static int? SafeNativeWindowHandle(AutomationElement element)
+    {
+        try
+        {
+            return element.Properties.NativeWindowHandle.Value;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private void WriteEnvironmentDiagnostics()
     {
         var executionEnvironment =
@@ -394,6 +489,7 @@ public abstract class NotepadTestBase
         TestContext.Progress.WriteLine($"Execution: {executionEnvironment}");
         TestContext.Progress.WriteLine($"OS: {Environment.OSVersion}");
         TestContext.Progress.WriteLine($"Test file: {_tempFilePath}");
+        TestContext.Progress.WriteLine($"Window existed before test: {_windowExistedBeforeTest}");
 
         try
         {
