@@ -61,12 +61,17 @@ public class NotepadTests : NotepadTestBase
     [Test]
     [Category("PortableNotepad")]
     [Property("TestCaseId", "TC0003")]
-    public void TC0003_CanSelectAllCopyReplaceAndSave()
+    public void TC0003_CanCopyAndPasteTextAsMultipleLines()
     {
         const string testCaseId = "TC0003";
-        const string originalText = "[TC0003] Text selected and copied by FlaUI";
-        const string replacementText = "[TC0003] Text replaced after copy";
-        RegisterTestCase(testCaseId, "Can select all, copy, replace and save");
+        const string originalText = "[TC0003] Clipboard text copied by FlaUI";
+        var expectedMultiline = string.Join(
+            Environment.NewLine,
+            originalText,
+            originalText,
+            originalText);
+
+        RegisterTestCase(testCaseId, "Can copy and paste text as multiple lines");
 
         var editor = FindEditor();
         ReplaceTextWithClipboard(editor, originalText);
@@ -80,27 +85,32 @@ public class NotepadTests : NotepadTestBase
             TimeSpan.FromSeconds(2),
             "Copied text did not reach the Windows clipboard.");
         CaptureWindow("02-text-selected-and-copied");
-
         Assert.That(GetClipboardTextSta(), Is.EqualTo(originalText));
 
-        SetClipboardTextSta(replacementText);
+        // The selection is still active after Ctrl+C. The first paste replaces it,
+        // then Enter + paste is repeated twice to build a real three-line document.
         Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_V);
+        Keyboard.Type(VirtualKeyShort.RETURN);
+        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_V);
+        Keyboard.Type(VirtualKeyShort.RETURN);
+        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_V);
+
         WaitUntil(
-            () => ReadEditorText(editor) == replacementText,
+            () => ReadEditorText(editor) == expectedMultiline,
             TimeSpan.FromSeconds(3),
-            "Selected text was not replaced after paste.");
-        CaptureWindow("03-selection-replaced");
+            "Copied text was not pasted as the expected three-line document.");
+        CaptureWindow("03-multiline-paste-complete");
+        Assert.That(ReadEditorText(editor), Is.EqualTo(expectedMultiline));
 
-        Assert.That(ReadEditorText(editor), Is.EqualTo(replacementText));
-
-        SaveAndWaitForText(replacementText);
-        CaptureWindow("04-saved");
-        Assert.That(File.ReadAllText(TestFilePath), Is.EqualTo(replacementText));
+        SaveAndWaitForText(expectedMultiline);
+        CaptureWindow("04-multiline-saved");
+        Assert.That(File.ReadAllText(TestFilePath), Is.EqualTo(expectedMultiline));
     }
 
     private static void RegisterTestCase(string testCaseId, string title)
     {
         AllureApi.SetTestName($"{testCaseId} | {title}");
+        AllureApi.AddLabel("suite", "FlaUI - Notepad");
         AllureApi.AddLabel("testCaseId", testCaseId);
         AllureApi.AddTags(testCaseId);
         TestContext.Progress.WriteLine($"Test case: {testCaseId} | {title}");
