@@ -300,6 +300,7 @@ def capture_window(window, test_name: str, step: str) -> Path | None:
 
 
 @allure.feature("Notepad desktop automation")
+@allure.suite("Python - Notepad")
 @allure.title("TC0005 | Can type, read and save text in Notepad")
 @allure.label("testCaseId", TEST_CASE_ID)
 @allure.tag(TEST_CASE_ID)
