@@ -58,10 +58,17 @@ $results = @(Get-ChildItem allure-results -Filter "*-result.json" -File)
 Write-Host "Allure test result files: $($results.Count)"
 
 if ($results.Count -gt 0) {
+    Write-Host "Normalizing Allure Tests-tree hierarchy..."
+    python scripts/normalize-allure-hierarchy.py allure-results
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Allure hierarchy normalization failed with exit code $LASTEXITCODE."
+        $reportExitCode = 1
+    }
+
     if (-not (Get-Command npx -ErrorAction SilentlyContinue)) {
         Write-Warning "npx was not found, so the Allure report cannot be generated."
         $reportExitCode = 1
-    } else {
+    } elseif ($reportExitCode -eq 0) {
         Write-Host "Generating Allure 3 report..."
         npx -y allure@3.16.0 generate allure-results --config ./allurerc.mjs
         $reportExitCode = $LASTEXITCODE
