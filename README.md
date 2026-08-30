@@ -29,7 +29,7 @@ Shared Notepad launch, UIA discovery, editor lookup, screenshots, file cleanup, 
 
 5. Open a unique Notepad document, paste text independently of the active keyboard layout, read it through UI Automation, save it, and verify the exact file contents.
 
-The Python fixture owns cleanup, so the test tab is closed even when a test fails before its final assertion.
+The Python fixture owns cleanup, so teardown closes the test tab even when a test fails before its final assertion. If the test caused a new Notepad window to be created, teardown also closes the blank window left behind by modern Notepad. A Notepad window that already existed before the test is left open so unrelated user documents are not closed.
 
 ## Why input uses the clipboard
 
@@ -151,6 +151,7 @@ Fallback locators are appropriate only when supported application versions genui
 
 - Test documents use unique temporary filenames to avoid attaching to an unrelated existing Notepad tab.
 - Modern Notepad can reuse a process/window and open documents as tabs, so launcher PID alone is not treated as identity.
+- Teardown records whether the test window existed before launch. Test-created windows are closed after the test document is removed; pre-existing windows are preserved.
 - Functional assertions use exact text/file equality where the scenario replaces the entire document.
 - Reporting failures are logged but do not change the functional test result.
 - Meaningful state changes use polling instead of arbitrary long sleeps; very short UI-settling waits remain where Windows exposes no reliable state to observe.
