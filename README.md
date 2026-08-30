@@ -7,19 +7,23 @@ A small Windows desktop UI automation lab that exercises the same Notepad applic
 
 The repository intentionally stays small. It is a practical comparison of desktop automation approaches, CI execution, screenshots, and Allure reporting rather than a generic framework.
 
+## Stable test case IDs
+
+Every automated scenario has a permanent virtual test case ID in the `TC0001` format. The ID is intentionally repeated across the code-level test name, NUnit/pytest metadata and output, Allure title/labels/tags, test text written into Notepad, and screenshot/artifact folder names. This makes the same scenario easy to trace across source code, CI logs, artifacts, and the report.
+
 ## Current test coverage
 
 ### FlaUI
 
 `flaui/Notepad.Tests/NotepadTests.cs`
 
-1. Type text, save it, and verify exact file contents.
-2. Save initial text, replace it, and verify the replacement exactly.
-3. Select/copy text, verify the clipboard, replace the selection, save, and verify the file.
+1. **TC0001** — Type text, save it, and verify exact file contents.
+2. **TC0002** — Save initial text, replace it, and verify the replacement exactly.
+3. **TC0003** — Select/copy text, verify the clipboard, replace the selection, save, and verify the file.
 
 `flaui/Notepad.Tests/NotepadZoomTests.cs`
 
-4. Reset Notepad zoom to 100%, zoom in twice, verify the exposed zoom percentage, then reset to 100%.
+4. **TC0004** — Reset Notepad zoom to 100%, zoom in twice, verify the exposed zoom percentage, then reset to 100%.
 
 Shared Notepad launch, UIA discovery, editor lookup, screenshots, file cleanup, and clipboard helpers live in `NotepadTestBase.cs` so the test fixtures contain mostly scenario logic.
 
@@ -27,7 +31,7 @@ Shared Notepad launch, UIA discovery, editor lookup, screenshots, file cleanup, 
 
 `python/tests/test_notepad.py`
 
-5. Open a unique Notepad document, paste text independently of the active keyboard layout, read it through UI Automation, save it, and verify the exact file contents.
+5. **TC0005** — Open a unique Notepad document, paste text independently of the active keyboard layout, read it through UI Automation, save it, and verify the exact file contents.
 
 The Python fixture owns cleanup, so teardown closes the test tab even when a test fails before its final assertion. If the test caused a new Notepad window to be created, teardown also closes the blank window left behind by modern Notepad. A Notepad window that already existed before the test is left open so unrelated user documents are not closed.
 
@@ -117,6 +121,8 @@ A green hosted run proves the scenarios passed on that runner image. It does not
 
 All C# and Python results are written into the same flat `allure-results/` directory and rendered by Allure 3.
 
+Each result is traceable by its `TCxxxx` ID. FlaUI scenarios set the Allure test name plus `testCaseId` and tag labels at runtime; the pywinauto scenario uses the equivalent pytest Allure decorators. Screenshot and artifact paths also include the test function/method name, which starts with the same ID.
+
 Locally:
 
 ```powershell
@@ -152,6 +158,7 @@ Fallback locators are appropriate only when supported application versions genui
 - Test documents use unique temporary filenames to avoid attaching to an unrelated existing Notepad tab.
 - Modern Notepad can reuse a process/window and open documents as tabs, so launcher PID alone is not treated as identity.
 - Teardown records whether the test window existed before launch. Test-created windows are closed after the test document is removed; pre-existing windows are preserved.
+- Stable `TCxxxx` IDs are never derived from execution order; they identify the scenario itself.
 - Functional assertions use exact text/file equality where the scenario replaces the entire document.
 - Reporting failures are logged but do not change the functional test result.
 - Meaningful state changes use polling instead of arbitrary long sleeps; very short UI-settling waits remain where Windows exposes no reliable state to observe.
