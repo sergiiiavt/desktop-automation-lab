@@ -36,11 +36,14 @@ if ($LASTEXITCODE -ne 0) {
     throw "Python dependency installation failed with exit code $LASTEXITCODE."
 }
 
-Write-Host "Running pywinauto suite with Allure results..."
-python -m pytest python/tests -vv --alluredir=allure-results
+Write-Host ""
+Write-Host "=== Starting Python - Notepad / TC0005 ==="
+Write-Host "pytest output capture is disabled so the Python test is visible below."
+python -m pytest python/tests -vv -s --alluredir=allure-results
 if ($LASTEXITCODE -ne 0) {
     throw "pywinauto tests failed with exit code $LASTEXITCODE."
 }
+Write-Host "=== Finished Python - Notepad / TC0005 ==="
 
 $results = @(Get-ChildItem allure-results -Filter "*-result.json" -File)
 Write-Host "Allure test result files: $($results.Count)"
