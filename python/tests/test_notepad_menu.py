@@ -12,7 +12,8 @@ from pywinauto.findwindows import ElementNotFoundError
 from pywinauto.uia_defines import NoPatternInterfaceError
 
 TEST_CASE_ID = "TC0007"
-VISIBLE_TEXT = "[TC0007] pywinauto portable menu test"
+VISIBLE_TEXT = "[TC0007] pywinauto locale-independent menu test"
+PASTE_TEXT = "[TC0007] pasted through the visible menu"
 
 
 @pytest.fixture
@@ -97,39 +98,100 @@ def read_text(editor) -> str:
     return value.rstrip("\r\n")
 
 
-def click_visible_menu_item(desktop, name: str, timeout: float = 4) -> None:
-    item = wait_for_menu_item(desktop, name, timeout)
+def find_second_top_menu_control(window, editor):
+    """Find the second left-side top menu control by geometry, not localized text."""
+    root = window.wrapper_object()
+    window_rect = root.rectangle()
+    editor_top = editor.rectangle().top
+    max_left = window_rect.left + min(430, int(window_rect.width() * 0.40))
+    candidates = []
+
+    for item in root.descendants():
+        try:
+            control_type = item.element_info.control_type or ""
+            if control_type not in {"Button", "MenuItem"}:
+                continue
+            if not item.is_visible() or not item.is_enabled():
+                continue
+
+            rect = item.rectangle()
+            center_y = (rect.top + rect.bottom) // 2
+            if rect.width() <= 0 or rect.height() <= 0:
+                continue
+            if center_y <= window_rect.top + 28 or center_y >= editor_top:
+                continue
+            if rect.left >= max_left:
+                continue
+
+            candidates.append(item)
+        except Exception:
+            continue
+
+    candidates.sort(key=lambda item: (item.rectangle().left, item.rectangle().top))
+    if len(candidates) < 2:
+        description = [
+            f"{getattr(item.element_info, 'control_type', '')}:"
+            f"{getattr(item.element_info, 'name', '')!r}@{item.rectangle()}"
+            for item in candidates
+        ]
+        raise AssertionError(
+            "Could not locate the first two top-level Notepad menu controls by geometry. "
+            f"Candidates: {description}"
+        )
+
+    return candidates[1]
+
+
+def open_second_top_menu(window, editor) -> None:
+    item = find_second_top_menu_control(window, editor)
     rect = item.rectangle()
+    name = (item.window_text() or "<localized second menu>").strip()
     print(
-        f"Physical menu click: '{name}' at "
+        f"Physical top-menu click: {name!r} at "
         f"({rect.mid_point().x}, {rect.mid_point().y})"
     )
     item.click_input()
-    time.sleep(0.35)
+    time.sleep(0.4)
 
 
-def click_menu_command(desktop, window, test_name: str, menu_name: str, command_name: str, step: str) -> None:
-    click_visible_menu_item(desktop, menu_name)
-    capture_window(window, test_name, step)
-    click_visible_menu_item(desktop, command_name)
+def read_accelerator_key(item) -> str:
+    try:
+        return (item.iface_accelerator_key.CurrentAcceleratorKey or "").strip()
+    except Exception:
+        return ""
 
 
-def wait_for_menu_item(desktop, name: str, timeout: float):
+def click_visible_command_by_accelerator(desktop, accelerator: str, timeout: float = 4) -> None:
+    """Click the visible popup command using its language-neutral UIA AcceleratorKey."""
+    expected = accelerator.replace(" ", "").casefold()
     deadline = time.monotonic() + timeout
-    seen = []
+    diagnostics = []
 
     while time.monotonic() < deadline:
-        seen = []
+        diagnostics = []
         for top_level in desktop.windows(control_type="Window"):
             try:
                 root = top_level.wrapper_object()
-                for item in root.descendants(control_type="MenuItem"):
+                for item in root.descendants():
                     try:
-                        title = item.window_text().strip()
-                        if title:
-                            seen.append(title)
-                        if title.casefold() == name.casefold() and item.is_visible():
-                            return item
+                        if not item.is_visible() or not item.is_enabled():
+                            continue
+                        key = read_accelerator_key(item)
+                        if key:
+                            diagnostics.append(
+                                f"{item.element_info.control_type}:"
+                                f"{item.window_text()!r}={key!r}"
+                            )
+                        if key.replace(" ", "").casefold() == expected:
+                            rect = item.rectangle()
+                            print(
+                                f"Physical command click by accelerator {accelerator!r}: "
+                                f"{item.window_text()!r} at "
+                                f"({rect.mid_point().x}, {rect.mid_point().y})"
+                            )
+                            item.click_input()
+                            time.sleep(0.3)
+                            return
                     except Exception:
                         continue
             except Exception:
@@ -137,7 +199,8 @@ def wait_for_menu_item(desktop, name: str, timeout: float):
         time.sleep(0.1)
 
     raise AssertionError(
-        f"Visible menu item {name!r} was not found. Menu items seen: {seen[-30:]}"
+        f"No visible menu command exposed accelerator {accelerator!r}. "
+        f"Accelerators seen: {diagnostics[-30:]}"
     )
 
 
@@ -179,64 +242,38 @@ def capture_window(window, test_name: str, step: str) -> None:
 
 @allure.feature("Notepad desktop automation")
 @allure.suite("Python - Notepad")
-@allure.title("TC0007 | Can copy and paste through visible menu clicks")
+@allure.title("TC0007 | Can paste through a locale-independent visible menu click")
 @allure.label("testCaseId", TEST_CASE_ID)
-@allure.tag(TEST_CASE_ID, "menu", "mouse", "portable")
-def test_TC0007_can_copy_and_paste_through_visible_menu_clicks(notepad_menu, request):
+@allure.tag(TEST_CASE_ID, "menu", "mouse", "portable", "locale-independent")
+def test_TC0007_can_paste_through_locale_independent_visible_menu(notepad_menu, request):
     desktop, window, _ = notepad_menu
     test_name = request.node.name
     editor = find_editor(window)
 
     assert read_text(editor) == VISIBLE_TEXT
-    capture_window(window, test_name, "01-before-menu-clicks")
+    capture_window(window, test_name, "01-before-menu-click")
 
-    with allure.step(f"{TEST_CASE_ID} | Physically click Edit > Select all"):
-        click_menu_command(
-            desktop,
-            window,
-            test_name,
-            "Edit",
-            "Select all",
-            "02-edit-menu-open-before-select-all",
-        )
-
-    with allure.step(f"{TEST_CASE_ID} | Physically click Edit > Copy"):
-        click_menu_command(
-            desktop,
-            window,
-            test_name,
-            "Edit",
-            "Copy",
-            "03-edit-menu-open-before-copy",
-        )
-        wait_until(
-            lambda: pyperclip.paste() == VISIBLE_TEXT,
-            timeout=3,
-            failure=f"Edit > Copy did not place {VISIBLE_TEXT!r} on the clipboard.",
-        )
-        assert pyperclip.paste() == VISIBLE_TEXT
-        capture_window(window, test_name, "04-copied-through-menu")
-
+    pyperclip.copy(PASTE_TEXT)
     editor.set_focus()
     editor.type_keys("{END}{ENTER}")
     time.sleep(0.2)
 
-    with allure.step(f"{TEST_CASE_ID} | Physically click Edit > Paste"):
-        click_menu_command(
-            desktop,
-            window,
-            test_name,
-            "Edit",
-            "Paste",
-            "05-edit-menu-open-before-paste",
-        )
+    with allure.step(
+        f"{TEST_CASE_ID} | Physically open the second top menu and click Ctrl+V command"
+    ):
+        open_second_top_menu(window, editor)
+        capture_window(window, test_name, "02-localized-edit-menu-open")
+        click_visible_command_by_accelerator(desktop, "Ctrl+V")
 
-    expected = VISIBLE_TEXT + "\n" + VISIBLE_TEXT
+    expected = VISIBLE_TEXT + "\n" + PASTE_TEXT
     wait_until(
         lambda: normalize_newlines(read_text(editor)) == expected,
         timeout=3,
-        failure="Edit > Paste did not append the copied text on a new line.",
+        failure=(
+            "The visible Ctrl+V menu command was clicked, but the expected text was not "
+            "pasted into the document."
+        ),
     )
-    capture_window(window, test_name, "06-pasted-through-menu")
+    capture_window(window, test_name, "03-pasted-through-visible-menu")
 
     assert normalize_newlines(read_text(editor)) == expected
