@@ -26,6 +26,7 @@ public class NotepadZoomTests : NotepadTestBase
     public void TC0004_CanZoomTextInAndReset()
     {
         AllureApi.SetTestName("TC0004 | Can zoom text in and reset");
+        AllureApi.AddLabel("suite", "FlaUI - Notepad");
         AllureApi.AddLabel("testCaseId", TestCaseId);
         AllureApi.AddTags(TestCaseId);
         TestContext.Progress.WriteLine("Test case: TC0004 | Can zoom text in and reset");
