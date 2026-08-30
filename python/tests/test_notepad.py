@@ -16,9 +16,10 @@ TEXT = "Hello desktop automation"
 
 @pytest.fixture
 def notepad(request):
-    """Open a unique temp file and always close only its Notepad tab."""
+    """Open a unique temp file and restore the desktop after the test."""
     window = None
     temp_path = None
+    preexisting_window_handles = set()
 
     try:
         with tempfile.NamedTemporaryFile(
@@ -28,9 +29,15 @@ def notepad(request):
         ) as temp_file:
             temp_path = Path(temp_file.name)
 
+        desktop = Desktop(backend="uia")
+        preexisting_window_handles = {
+            candidate.handle
+            for candidate in desktop.windows(control_type="Window")
+            if candidate.handle
+        }
+
         subprocess.Popen(["notepad.exe", str(temp_path)])
 
-        desktop = Desktop(backend="uia")
         window = find_window_for_file(desktop, temp_path.name, timeout=15)
         window.wait("visible enabled", timeout=10)
         activate_file_tab(window, temp_path.name, timeout=5)
@@ -41,6 +48,8 @@ def notepad(request):
             capture_window(window, request.node.name, "99-final")
             try:
                 close_test_tab(window, temp_path.name)
+                if window.handle not in preexisting_window_handles:
+                    close_test_created_window(window)
             except Exception as exc:
                 print(f"Cleanup warning: {exc}")
 
@@ -228,12 +237,36 @@ def wait_until(condition, timeout: float, failure: str, interval: float = 0.1) -
 
 
 def close_test_tab(window, file_name: str) -> None:
-    """Close only the test tab, not the whole Notepad session."""
+    """Close the exact test tab without touching unrelated Notepad documents."""
     activate_file_tab(window, file_name, timeout=3)
     editor = find_editor(window)
     editor.set_focus()
     editor.type_keys("^w")
     time.sleep(0.2)
+
+
+def close_test_created_window(window) -> None:
+    """Close the remaining blank window only when this test created that window."""
+    try:
+        window.close()
+    except Exception:
+        try:
+            root = window.wrapper_object()
+            root.set_focus()
+            root.type_keys("%{F4}")
+        except Exception:
+            return
+
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        try:
+            if not window.exists(timeout=0.1):
+                return
+        except Exception:
+            return
+        time.sleep(0.1)
+
+    print(f"Cleanup warning: test-created Notepad window {window.handle} did not close")
 
 
 def capture_window(window, test_name: str, step: str) -> Path | None:
