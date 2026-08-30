@@ -29,29 +29,29 @@ $pythonExitCode = 0
 $dependencyExitCode = 0
 $reportExitCode = 0
 
-Write-Host "Running FlaUI suite (TC0001-TC0004)..."
+Write-Host "Running FlaUI suite (TC0001-TC0004, TC0006)..."
 dotnet test flaui/Notepad.Tests/Notepad.Tests.csproj --configuration Debug
 $flauiExitCode = $LASTEXITCODE
 if ($flauiExitCode -ne 0) {
-    Write-Warning "FlaUI suite failed with exit code $flauiExitCode. Continuing so TC0005 can still run."
+    Write-Warning "FlaUI suite failed with exit code $flauiExitCode. Continuing so Python tests can still run."
 }
 
 Write-Host "Installing/verifying Python test dependencies..."
 python -m pip install -r python/requirements.txt
 $dependencyExitCode = $LASTEXITCODE
 if ($dependencyExitCode -ne 0) {
-    Write-Warning "Python dependency installation failed with exit code $dependencyExitCode. TC0005 cannot run."
+    Write-Warning "Python dependency installation failed with exit code $dependencyExitCode. Python tests cannot run."
     $pythonExitCode = $dependencyExitCode
 } else {
     Write-Host ""
-    Write-Host "=== Starting Python - Notepad / TC0005 ==="
-    Write-Host "pytest output capture is disabled so the Python test is visible below."
+    Write-Host "=== Starting Python - Notepad / TC0005 + TC0007 ==="
+    Write-Host "pytest output capture is disabled so the Python tests are visible below."
     python -m pytest python/tests -vv -s --alluredir=allure-results
     $pythonExitCode = $LASTEXITCODE
     if ($pythonExitCode -ne 0) {
         Write-Warning "pywinauto suite failed with exit code $pythonExitCode."
     }
-    Write-Host "=== Finished Python - Notepad / TC0005 ==="
+    Write-Host "=== Finished Python - Notepad / TC0005 + TC0007 ==="
 }
 
 $results = @(Get-ChildItem allure-results -Filter "*-result.json" -File)
@@ -88,8 +88,8 @@ if ($results.Count -gt 0) {
 
 Write-Host ""
 Write-Host "=== Local suite summary ==="
-Write-Host "FlaUI (TC0001-TC0004): exit $flauiExitCode"
-Write-Host "Python / pywinauto (TC0005): exit $pythonExitCode"
+Write-Host "FlaUI (TC0001-TC0004, TC0006): exit $flauiExitCode"
+Write-Host "Python / pywinauto (TC0005, TC0007): exit $pythonExitCode"
 Write-Host "Allure report: exit $reportExitCode"
 Write-Host "==========================="
 
