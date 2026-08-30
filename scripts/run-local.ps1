@@ -30,6 +30,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "FlaUI tests failed with exit code $LASTEXITCODE."
 }
 
+Write-Host "Installing/verifying Python test dependencies..."
+python -m pip install -r python/requirements.txt
+if ($LASTEXITCODE -ne 0) {
+    throw "Python dependency installation failed with exit code $LASTEXITCODE."
+}
+
 Write-Host "Running pywinauto suite with Allure results..."
 python -m pytest python/tests -vv --alluredir=allure-results
 if ($LASTEXITCODE -ne 0) {
