@@ -19,7 +19,7 @@ Every automated scenario has a permanent virtual test case ID in the `TC0001` fo
 
 1. **TC0001** — Type text, save it, and verify exact file contents.
 2. **TC0002** — Save initial text, replace it, and verify the replacement exactly.
-3. **TC0003** — Select/copy text, verify the clipboard, replace the selection, save, and verify the file.
+3. **TC0003** — Select all text, copy it to the Windows clipboard, verify the copied value, paste it three times with real Enter key presses to create a multiline document, then save and verify the exact multiline file contents.
 
 `flaui/Notepad.Tests/NotepadZoomTests.cs`
 
@@ -39,7 +39,7 @@ The Python fixture owns cleanup, so teardown closes the test tab even when a tes
 
 Desktop key simulation is affected by the active Windows keyboard layout. A Latin string can be corrupted when the runner or local machine is using a Ukrainian layout.
 
-Both implementations therefore use the Windows clipboard plus `Ctrl+V` for arbitrary text. Keyboard shortcuts such as `Ctrl+A`, `Ctrl+C`, `Ctrl+S`, `Ctrl+W`, and zoom shortcuts remain real keyboard interactions.
+Both implementations therefore use the Windows clipboard plus `Ctrl+V` for arbitrary text. Keyboard shortcuts such as `Ctrl+A`, `Ctrl+C`, `Ctrl+S`, `Ctrl+W`, Enter, and zoom shortcuts remain real keyboard interactions.
 
 ## Project structure
 
@@ -120,6 +120,11 @@ A green hosted run proves the scenarios passed on that runner image. It does not
 ## Allure report
 
 All C# and Python results are written into the same flat `allure-results/` directory and rendered by Allure 3.
+
+Allure suite grouping is set explicitly rather than relying on framework defaults:
+
+- `FlaUI - Notepad` — `TC0001` through `TC0004`
+- `Python - Notepad` — `TC0005`
 
 Each result is traceable by its `TCxxxx` ID. FlaUI scenarios set the Allure test name plus `testCaseId` and tag labels at runtime; the pywinauto scenario uses the equivalent pytest Allure decorators. Screenshot and artifact paths also include the test function/method name, which starts with the same ID.
 
