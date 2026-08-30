@@ -15,7 +15,7 @@ public class NotepadMenuTests : NotepadTestBase
 {
     private const string TestCaseId = "TC0006";
     private const string VisibleText =
-        "[TC0006] FlaUI menu test - watch View > Zoom > Zoom in being clicked";
+        "[TC0006] FlaUI portable menu test";
 
     protected override string InitialText => VisibleText;
     protected override string TempFilePrefix => "desktop-automation-menu-flaui-";
@@ -23,55 +23,56 @@ public class NotepadMenuTests : NotepadTestBase
     [Test]
     [Category("PortableNotepad")]
     [Property("TestCaseId", TestCaseId)]
-    public void TC0006_CanZoomInThroughVisibleMenuClicks()
+    public void TC0006_CanCopyAndPasteThroughVisibleMenuClicks()
     {
-        AllureApi.SetTestName("TC0006 | Can zoom in through visible menu clicks");
+        AllureApi.SetTestName("TC0006 | Can copy and paste through visible menu clicks");
         AllureApi.AddLabel("suite", "FlaUI - Notepad");
         AllureApi.AddLabel("testCaseId", TestCaseId);
-        AllureApi.AddTags(TestCaseId, "menu", "mouse");
+        AllureApi.AddTags(TestCaseId, "menu", "mouse", "portable");
         TestContext.Progress.WriteLine(
-            "Test case: TC0006 | Physically click View > Zoom > Zoom in");
+            "Test case: TC0006 | Physically click Edit > Select all > Copy, then Edit > Paste");
 
         var editor = FindEditor();
         Assert.That(ReadEditorText(editor), Is.EqualTo(VisibleText));
-
-        ResetZoom(editor);
-        var baseline = ReadRenderedTextSize(editor);
-        Assert.That(baseline, Is.Not.Null,
-            "Notepad did not expose TextPattern bounds needed to verify the visible zoom change.");
         CaptureWindow("01-before-menu-clicks");
 
-        ClickMenuItem("View");
-        Thread.Sleep(450);
-        CaptureWindow("02-view-menu-open");
+        ClickMenuCommand("Edit", "Select all", "02-edit-menu-open-before-select-all");
+        Thread.Sleep(200);
 
-        ClickMenuItem("Zoom");
-        Thread.Sleep(450);
-        CaptureWindow("03-zoom-submenu-open");
+        ClickMenuCommand("Edit", "Copy", "03-edit-menu-open-before-copy");
+        WaitUntil(
+            () => GetClipboardTextSta() == VisibleText,
+            TimeSpan.FromSeconds(3),
+            $"Edit > Copy did not place {VisibleText!r} on the Windows clipboard.");
+        Assert.That(GetClipboardTextSta(), Is.EqualTo(VisibleText));
+        CaptureWindow("04-copied-through-menu");
 
-        ClickMenuItem("Zoom in");
+        editor.Focus();
+        Keyboard.Type(VirtualKeyShort.END);
+        Keyboard.Type(VirtualKeyShort.RETURN);
         Wait.UntilInputIsProcessed();
 
-        var enlarged = WaitForLargerText(editor, baseline!.Value);
-        CaptureWindow("04-after-zoom-in-menu-click");
+        ClickMenuCommand("Edit", "Paste", "05-edit-menu-open-before-paste");
 
-        Assert.That(enlarged.Width > baseline.Value.Width * 1.05 ||
-                    enlarged.Height > baseline.Value.Height * 1.05,
-            Is.True,
-            $"Rendered text did not become larger. Before={baseline.Value}; after={enlarged}");
-        Assert.That(ReadEditorText(editor), Is.EqualTo(VisibleText));
+        var expected = VisibleText + Environment.NewLine + VisibleText;
+        WaitUntil(
+            () => NormalizeNewlines(ReadEditorText(editor)) == NormalizeNewlines(expected),
+            TimeSpan.FromSeconds(3),
+            "Edit > Paste did not append the copied text on a new line.");
+        CaptureWindow("06-pasted-through-menu");
+
+        Assert.That(
+            NormalizeNewlines(ReadEditorText(editor)),
+            Is.EqualTo(NormalizeNewlines(expected)));
     }
 
-    protected override void BeforeClosingTestDocument()
+    private void ClickMenuCommand(string menuName, string commandName, string openStep)
     {
-        try
-        {
-            ResetZoom(FindEditor());
-        }
-        catch (Exception ex)
-        {
-            TestContext.Progress.WriteLine($"Menu-test zoom reset warning: {ex.Message}");
-        }
+        ClickMenuItem(menuName);
+        Thread.Sleep(350);
+        CaptureWindow(openStep);
+        ClickMenuItem(commandName);
+        Thread.Sleep(250);
     }
 
     private void ClickMenuItem(string name)
@@ -113,69 +114,8 @@ public class NotepadMenuTests : NotepadTestBase
         }
     }
 
-    private static void ResetZoom(FlaUI.Core.AutomationElements.TextBox editor)
-    {
-        editor.Focus();
-        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_0);
-        Wait.UntilInputIsProcessed();
-        Thread.Sleep(150);
-    }
-
-    private static RenderedTextSize WaitForLargerText(
-        FlaUI.Core.AutomationElements.TextBox editor,
-        RenderedTextSize baseline)
-    {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(4);
-        RenderedTextSize? last = null;
-
-        while (DateTime.UtcNow < deadline)
-        {
-            last = ReadRenderedTextSize(editor);
-            if (last.HasValue &&
-                (last.Value.Width > baseline.Width * 1.05 ||
-                 last.Value.Height > baseline.Height * 1.05))
-            {
-                return last.Value;
-            }
-            Thread.Sleep(100);
-        }
-
-        throw new InvalidOperationException(
-            $"Zoom in menu command was clicked but rendered text did not grow. " +
-            $"Before={baseline}; last={last?.ToString() ?? "<not exposed>"}");
-    }
-
-    private static RenderedTextSize? ReadRenderedTextSize(
-        FlaUI.Core.AutomationElements.TextBox editor)
-    {
-        try
-        {
-            if (!editor.Patterns.Text.TryGetPattern(out var textPattern))
-            {
-                return null;
-            }
-
-            var rectangles = textPattern.DocumentRange
-                .GetBoundingRectangles()
-                .Where(rectangle => rectangle.Width > 0 && rectangle.Height > 0)
-                .ToArray();
-
-            if (rectangles.Length == 0)
-            {
-                return null;
-            }
-
-            var left = rectangles.Min(rectangle => rectangle.Left);
-            var top = rectangles.Min(rectangle => rectangle.Top);
-            var right = rectangles.Max(rectangle => rectangle.Right);
-            var bottom = rectangles.Max(rectangle => rectangle.Bottom);
-            return new RenderedTextSize(right - left, bottom - top);
-        }
-        catch
-        {
-            return null;
-        }
-    }
+    private static string NormalizeNewlines(string value) =>
+        value.Replace("\r\n", "\n").Replace('\r', '\n');
 
     private static string SafeName(AutomationElement element)
     {
@@ -188,6 +128,4 @@ public class NotepadMenuTests : NotepadTestBase
             return string.Empty;
         }
     }
-
-    private readonly record struct RenderedTextSize(int Width, int Height);
 }
