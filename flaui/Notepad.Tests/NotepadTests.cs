@@ -78,8 +78,8 @@ public class NotepadTests : NotepadTestBase
         CaptureWindow("01-original-text-entered");
 
         editor.Focus();
-        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
-        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_C);
+        SendCtrlShortcut(VirtualKeyShort.KEY_A);
+        SendCtrlShortcut(VirtualKeyShort.KEY_C);
         WaitUntil(
             () => GetClipboardTextSta() == originalText,
             TimeSpan.FromSeconds(2),
@@ -87,13 +87,16 @@ public class NotepadTests : NotepadTestBase
         CaptureWindow("02-text-selected-and-copied");
         Assert.That(GetClipboardTextSta(), Is.EqualTo(originalText));
 
-        // The selection is still active after Ctrl+C. The first paste replaces it,
-        // then Enter + paste is repeated twice to build a real three-line document.
-        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_V);
+        // Keep Ctrl held long enough for Windows/Notepad to process it as a real chord.
+        // This avoids a local Windows 11 timing issue where TypeSimultaneously(Ctrl, V)
+        // could be interpreted as a literal V keystroke.
+        SendCtrlShortcut(VirtualKeyShort.KEY_V);
         Keyboard.Type(VirtualKeyShort.RETURN);
-        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_V);
+        Wait.UntilInputIsProcessed();
+        SendCtrlShortcut(VirtualKeyShort.KEY_V);
         Keyboard.Type(VirtualKeyShort.RETURN);
-        Keyboard.TypeSimultaneously(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_V);
+        Wait.UntilInputIsProcessed();
+        SendCtrlShortcut(VirtualKeyShort.KEY_V);
 
         WaitUntil(
             () => ReadEditorText(editor) == expectedMultiline,
@@ -105,6 +108,19 @@ public class NotepadTests : NotepadTestBase
         SaveAndWaitForText(expectedMultiline);
         CaptureWindow("04-multiline-saved");
         Assert.That(File.ReadAllText(TestFilePath), Is.EqualTo(expectedMultiline));
+    }
+
+    private static void SendCtrlShortcut(VirtualKeyShort key)
+    {
+        using (Keyboard.Pressing(VirtualKeyShort.CONTROL))
+        {
+            Wait.UntilInputIsProcessed();
+            Thread.Sleep(60);
+            Keyboard.Type(key);
+            Wait.UntilInputIsProcessed();
+            Thread.Sleep(60);
+        }
+        Wait.UntilInputIsProcessed();
     }
 
     private static void RegisterTestCase(string testCaseId, string title)
