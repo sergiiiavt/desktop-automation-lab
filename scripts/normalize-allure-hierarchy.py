@@ -32,16 +32,24 @@ def main() -> int:
         full_name = str(data.get("fullName", ""))
 
         if "pytest" in framework or full_name.startswith("python.") or "test_notepad" in full_name:
-            package = "Python - Notepad"
+            group = "Python - Notepad"
         elif "nunit" in framework or full_name.startswith("Notepad.Tests"):
-            package = "FlaUI - Notepad"
+            group = "FlaUI - Notepad"
         else:
             print(f"Hierarchy unchanged for {path.name}: framework={framework!r}, fullName={full_name!r}")
             continue
 
-        data["labels"] = replace_single_label(labels, "package", package)
+        # Allure 3 Awesome report's Tests tree is driven by titlePath.
+        # Adapter defaults such as ["python", "tests", "test_notepad.py"] and
+        # ["Notepad", "Tests", "NotepadTests", ...] therefore must be replaced
+        # directly; changing only suite/package labels does not affect that tree.
+        data["titlePath"] = [group]
+        data["labels"] = replace_single_label(labels, "package", group)
+        data["labels"] = replace_single_label(data["labels"], "parentSuite", group)
+        data["labels"] = replace_single_label(data["labels"], "suite", group)
+
         path.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        print(f"Allure package: {path.name} -> {package}")
+        print(f"Allure Tests tree: {path.name} -> {group}; titlePath={data['titlePath']}")
         changed += 1
 
     print(f"Normalized Allure hierarchy for {changed}/{len(files)} result files.")
