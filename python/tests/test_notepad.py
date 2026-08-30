@@ -11,7 +11,8 @@ from pywinauto import Desktop
 from pywinauto.findwindows import ElementNotFoundError
 from pywinauto.uia_defines import NoPatternInterfaceError
 
-TEXT = "Hello desktop automation"
+TEST_CASE_ID = "TC0005"
+TEXT = f"[{TEST_CASE_ID}] Hello desktop automation"
 
 
 @pytest.fixture
@@ -287,7 +288,7 @@ def capture_window(window, test_name: str, step: str) -> Path | None:
 
         allure.attach(
             target.read_bytes(),
-            name=f"Notepad - {step}",
+            name=f"{TEST_CASE_ID} | Notepad - {step}",
             attachment_type=allure.attachment_type.PNG,
         )
 
@@ -299,22 +300,25 @@ def capture_window(window, test_name: str, step: str) -> Path | None:
 
 
 @allure.feature("Notepad desktop automation")
-@allure.title("Can type, read and save text in Notepad")
-def test_can_type_read_and_save_text(notepad, request):
+@allure.title("TC0005 | Can type, read and save text in Notepad")
+@allure.label("testCaseId", TEST_CASE_ID)
+@allure.tag(TEST_CASE_ID)
+def test_TC0005_can_type_read_and_save_text(notepad, request):
+    print(f"Test case: {TEST_CASE_ID} | Can type, read and save text in Notepad")
     window, temp_path = notepad
     test_name = request.node.name
 
-    with allure.step("Open the exact Notepad test tab"):
+    with allure.step(f"{TEST_CASE_ID} | Open the exact Notepad test tab"):
         activate_file_tab(window, temp_path.name, timeout=3)
         capture_window(window, test_name, "00-opened")
         editor = find_editor(window)
 
-    with allure.step("Paste layout-independent text into Notepad"):
+    with allure.step(f"{TEST_CASE_ID} | Paste layout-independent text into Notepad"):
         set_text(editor, TEXT)
         capture_window(window, test_name, "01-text-entered")
         assert read_text(editor) == TEXT
 
-    with allure.step("Save with Ctrl+S and verify exact file contents"):
+    with allure.step(f"{TEST_CASE_ID} | Save with Ctrl+S and verify exact file contents"):
         editor.set_focus()
         editor.type_keys("^s")
         wait_for_saved_text(temp_path, TEXT)
