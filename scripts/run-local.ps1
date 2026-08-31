@@ -29,14 +29,14 @@ $pythonExitCode = 0
 $dependencyExitCode = 0
 $reportExitCode = 0
 
-Write-Host "Running FlaUI suite (TC0001-TC0004, TC0006)..."
+Write-Host "=== Running FlaUI suite ==="
 dotnet test flaui/Notepad.Tests/Notepad.Tests.csproj --configuration Debug
 $flauiExitCode = $LASTEXITCODE
 if ($flauiExitCode -ne 0) {
     Write-Warning "FlaUI suite failed with exit code $flauiExitCode. Continuing so Python tests can still run."
 }
 
-Write-Host "Installing/verifying Python test dependencies..."
+Write-Host "=== Installing/verifying Python test dependencies ==="
 python -m pip install -r python/requirements.txt
 $dependencyExitCode = $LASTEXITCODE
 if ($dependencyExitCode -ne 0) {
@@ -44,21 +44,21 @@ if ($dependencyExitCode -ne 0) {
     $pythonExitCode = $dependencyExitCode
 } else {
     Write-Host ""
-    Write-Host "=== Starting Python - Notepad / TC0005 + TC0007 ==="
+    Write-Host "=== Starting Python - Notepad ==="
     Write-Host "pytest output capture is disabled so the Python tests are visible below."
     python -m pytest python/tests -vv -s --alluredir=allure-results
     $pythonExitCode = $LASTEXITCODE
     if ($pythonExitCode -ne 0) {
         Write-Warning "pywinauto suite failed with exit code $pythonExitCode."
     }
-    Write-Host "=== Finished Python - Notepad / TC0005 + TC0007 ==="
+    Write-Host "=== Finished Python - Notepad ==="
 }
 
 $results = @(Get-ChildItem allure-results -Filter "*-result.json" -File)
 Write-Host "Allure test result files: $($results.Count)"
 
 if ($results.Count -gt 0) {
-    Write-Host "Normalizing Allure Tests-tree hierarchy..."
+    Write-Host "=== Normalizing Allure Tests-tree hierarchy ==="
     python scripts/normalize-allure-hierarchy.py allure-results
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "Allure hierarchy normalization failed with exit code $LASTEXITCODE."
@@ -69,7 +69,7 @@ if ($results.Count -gt 0) {
         Write-Warning "npx was not found, so the Allure report cannot be generated."
         $reportExitCode = 1
     } elseif ($reportExitCode -eq 0) {
-        Write-Host "Generating Allure 3 report..."
+        Write-Host "=== Generating Allure 3 report ==="
         npx -y allure@3.16.0 generate allure-results --config ./allurerc.mjs
         $reportExitCode = $LASTEXITCODE
         if ($reportExitCode -eq 0) {
@@ -88,8 +88,8 @@ if ($results.Count -gt 0) {
 
 Write-Host ""
 Write-Host "=== Local suite summary ==="
-Write-Host "FlaUI (TC0001-TC0004, TC0006): exit $flauiExitCode"
-Write-Host "Python / pywinauto (TC0005, TC0007): exit $pythonExitCode"
+Write-Host "FlaUI (TC0001-TC0005): exit $flauiExitCode"
+Write-Host "Python / pywinauto (TC0006-TC0007): exit $pythonExitCode"
 Write-Host "Allure report: exit $reportExitCode"
 Write-Host "==========================="
 

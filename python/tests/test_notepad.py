@@ -11,7 +11,7 @@ from pywinauto import Desktop
 from pywinauto.findwindows import ElementNotFoundError
 from pywinauto.uia_defines import NoPatternInterfaceError
 
-TEST_CASE_ID = "TC0005"
+TEST_CASE_ID = "TC0006"
 TEXT = f"[{TEST_CASE_ID}] Hello desktop automation"
 
 
@@ -301,10 +301,10 @@ def capture_window(window, test_name: str, step: str) -> Path | None:
 
 @allure.feature("Notepad desktop automation")
 @allure.suite("Python - Notepad")
-@allure.title("TC0005 | Can type, read and save text in Notepad")
+@allure.title("TC0006 | Can type, read and save text in Notepad")
 @allure.label("testCaseId", TEST_CASE_ID)
 @allure.tag(TEST_CASE_ID)
-def test_TC0005_can_type_read_and_save_text(notepad, request):
+def test_TC0006_can_type_read_and_save_text(notepad, request):
     print(f"Test case: {TEST_CASE_ID} | Can type, read and save text in Notepad")
     window, temp_path = notepad
     test_name = request.node.name

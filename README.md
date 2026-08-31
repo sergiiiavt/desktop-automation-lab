@@ -25,13 +25,21 @@ Every automated scenario has a permanent virtual test case ID in the `TC0001` fo
 
 4. **TC0004** — Reset Notepad zoom to 100%, zoom in twice, verify the exposed zoom percentage, then reset to 100%.
 
+`flaui/Notepad.Tests/NotepadMenuTests.cs`
+
+5. **TC0005** — Paste text through a physically opened, locale-independent visible Edit menu Ctrl+V command, then verify the pasted result.
+
 Shared Notepad launch, UIA discovery, editor lookup, screenshots, file cleanup, and clipboard helpers live in `NotepadTestBase.cs` so the test fixtures contain mostly scenario logic.
 
 ### pywinauto
 
 `python/tests/test_notepad.py`
 
-5. **TC0005** — Open a unique Notepad document, paste text independently of the active keyboard layout, read it through UI Automation, save it, and verify the exact file contents.
+6. **TC0006** — Open a unique Notepad document, paste text independently of the active keyboard layout, read it through UI Automation, save it, and verify the exact file contents.
+
+`python/tests/test_notepad_menu.py`
+
+7. **TC0007** — Paste text through a physically opened, locale-independent visible Edit menu Ctrl+V command, then verify the pasted result.
 
 The Python fixture owns cleanup, so teardown closes the test tab even when a test fails before its final assertion. If the test caused a new Notepad window to be created, teardown also closes the blank window left behind by modern Notepad. A Notepad window that already existed before the test is left open so unrelated user documents are not closed.
 
@@ -109,12 +117,9 @@ The inspector opens a unique temporary document and closes only that document wh
 
 `.github/workflows/desktop-ui-tests.yml` runs on:
 
-- pushes to `main`;
-- pull requests targeting `main`;
-- manual `workflow_dispatch` runs.
 
 The current GitHub-hosted baseline uses `windows-latest` (Windows Server), runs all four FlaUI scenarios plus the pywinauto scenario, captures screenshots for successful tests as well as failures, generates one combined Allure report, and uploads the report/artifacts to GitHub Actions.
-
+The current GitHub-hosted baseline uses `windows-latest` (Windows Server), runs all five FlaUI scenarios plus both pywinauto scenarios, captures screenshots for successful tests as well as failures, generates one combined Allure report, and uploads the report/artifacts to GitHub Actions.
 A green hosted run proves the scenarios passed on that runner image. It does not claim that every Windows 11 Notepad build exposes the identical UI Automation tree.
 
 ## Allure report
@@ -123,8 +128,8 @@ All C# and Python results are written into the same flat `allure-results/` direc
 
 Allure suite grouping is set explicitly rather than relying on framework defaults:
 
-- `FlaUI - Notepad` — `TC0001` through `TC0004`
-- `Python - Notepad` — `TC0005`
+- `FlaUI - Notepad` — `TC0001` through `TC0005`
+- `Python - Notepad` — `TC0006` through `TC0007`
 
 Each result is traceable by its `TCxxxx` ID. FlaUI scenarios set the Allure test name plus `testCaseId` and tag labels at runtime; the pywinauto scenario uses the equivalent pytest Allure decorators. Screenshot and artifact paths also include the test function/method name, which starts with the same ID.
 

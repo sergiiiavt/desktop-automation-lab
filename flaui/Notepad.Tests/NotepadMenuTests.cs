@@ -13,11 +13,11 @@ namespace Notepad.Tests;
 [NonParallelizable]
 public class NotepadMenuTests : NotepadTestBase
 {
-    private const string TestCaseId = "TC0006";
+    private const string TestCaseId = "TC0005";
     private const string VisibleText =
-        "[TC0006] FlaUI locale-independent menu test";
+        "[TC0005] FlaUI locale-independent menu test";
     private const string PasteText =
-        "[TC0006] pasted through the visible menu";
+        "[TC0005] pasted through the visible menu";
 
     protected override string InitialText => VisibleText;
     protected override string TempFilePrefix => "desktop-automation-menu-flaui-";
@@ -25,10 +25,10 @@ public class NotepadMenuTests : NotepadTestBase
     [Test]
     [Category("PortableNotepad")]
     [Property("TestCaseId", TestCaseId)]
-    public void TC0006_CanPasteThroughLocaleIndependentVisibleMenu()
+    public void TC0005_CanPasteThroughLocaleIndependentVisibleMenu()
     {
         AllureApi.SetTestName(
-            "TC0006 | Can paste through a locale-independent visible menu click");
+            "TC0005 | Can paste through a locale-independent visible menu click");
         AllureApi.AddLabel("suite", "FlaUI - Notepad");
         AllureApi.AddLabel("testCaseId", TestCaseId);
         AllureApi.AddTags(
@@ -38,7 +38,7 @@ public class NotepadMenuTests : NotepadTestBase
             "portable",
             "locale-independent");
         TestContext.Progress.WriteLine(
-            "Test case: TC0006 | Physically open the second top menu and click the Ctrl+V command");
+            "Test case: TC0005 | Physically open the second top menu and click the Ctrl+V command");
 
         var editor = FindEditor();
         Assert.That(ReadEditorText(editor), Is.EqualTo(VisibleText));
